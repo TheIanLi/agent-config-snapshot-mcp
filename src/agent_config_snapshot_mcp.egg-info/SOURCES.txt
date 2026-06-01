@@ -1,0 +1,17 @@
+pyproject.toml
+src/agent_config_snapshot_mcp.egg-info/PKG-INFO
+src/agent_config_snapshot_mcp.egg-info/SOURCES.txt
+src/agent_config_snapshot_mcp.egg-info/dependency_links.txt
+src/agent_config_snapshot_mcp.egg-info/entry_points.txt
+src/agent_config_snapshot_mcp.egg-info/requires.txt
+src/agent_config_snapshot_mcp.egg-info/top_level.txt
+src/agent_snapshot/__init__.py
+src/agent_snapshot/__main__.py
+src/agent_snapshot/cli.py
+src/agent_snapshot/config.py
+src/agent_snapshot/server.py
+src/agent_snapshot/snapshot.py
+src/agent_snapshot/watcher.py
+tests/test_cli.py
+tests/test_snapshot.py
+tests/test_watcher.py

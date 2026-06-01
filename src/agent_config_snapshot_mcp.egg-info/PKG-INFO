@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: agent-config-snapshot-mcp
+Version: 0.1.0
+Summary: AI agent 关键配置文件快照备份与回滚 MCP Server
+Requires-Python: >=3.10
+Requires-Dist: mcp[cli]
+Requires-Dist: pyyaml
+Requires-Dist: watchdog
+Requires-Dist: schedule
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"

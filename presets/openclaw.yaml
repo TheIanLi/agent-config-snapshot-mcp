@@ -1,0 +1,27 @@
+# OpenClaw Agent 预设模板
+# 保护 OpenClaw 的核心配置文件
+
+protected_files:
+  - path: ~/.openclaw/config.yaml
+    label: "主配置"
+    watch: on_change
+  - path: ~/.openclaw/.env
+    label: "API密钥"
+    watch: on_change
+  - path: ~/.openclaw/auth.json
+    label: "OAuth凭证"
+    watch: on_change
+  - path: ~/.openclaw/memories/MEMORY.md
+    label: "记忆笔记"
+    watch: daily
+  - path: ~/.openclaw/memories/USER.md
+    label: "用户画像"
+    watch: daily
+  - path: ~/.openclaw/settings.json
+    label: "用户设置"
+    watch: on_change
+
+snapshot_dir: ~/.agent-snapshots/
+daily_time: "04:00"
+retention:
+  max_snapshots_per_file: 50

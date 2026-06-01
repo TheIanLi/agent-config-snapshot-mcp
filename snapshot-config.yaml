@@ -1,0 +1,32 @@
+protected_files:
+- path: ~/.hermes_data/.env
+  label: hermes_data/.env
+  watch: on_change
+- path: ~/.hermes_data/SOUL.md
+  label: hermes_data/SOUL
+  watch: on_change
+- path: ~/.hermes_data/auth.json
+  label: hermes_data/auth
+  watch: on_change
+- path: ~/.hermes_data/channel_directory.json
+  label: hermes_data/channel_directory
+  watch: on_change
+- path: ~/.hermes_data/config.yaml
+  label: hermes_data/config
+  watch: on_change
+- path: ~/.hermes_data/memories/MEMORY.md
+  label: hermes_data/memories/MEMORY
+  watch: daily
+- path: ~/.hermes_data/memories/USER.md
+  label: hermes_data/memories/USER
+  watch: daily
+- path: ~/.claude/.credentials.json
+  label: claude/.credentials
+  watch: on_change
+- path: ~/.claude/settings.json
+  label: claude/settings
+  watch: on_change
+snapshot_dir: ~/.agent-snapshots/
+daily_time: 04:00
+retention:
+  max_snapshots_per_file: 50

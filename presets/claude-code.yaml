@@ -1,0 +1,21 @@
+# Claude Code 预设模板
+# 保护 Claude Code 的核心配置文件
+
+protected_files:
+  - path: ~/.claude/settings.json
+    label: "用户设置"
+    watch: on_change
+  - path: ~/.claude/.credentials.json
+    label: "API凭证"
+    watch: on_change
+  - path: ~/.claude/plugins/installed_plugins.json
+    label: "已安装插件"
+    watch: manual
+  - path: ~/.claude/plugins/known_marketplaces.json
+    label: "插件市场"
+    watch: manual
+
+snapshot_dir: ~/.agent-snapshots/
+daily_time: "04:00"
+retention:
+  max_snapshots_per_file: 50

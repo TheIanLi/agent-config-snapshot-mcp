@@ -1,0 +1,27 @@
+[project]
+name = "agent-config-snapshot-mcp"
+version = "0.1.0"
+description = "AI agent 关键配置文件快照备份与回滚 MCP Server"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]",
+    "pyyaml",
+    "watchdog",
+    "schedule",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[project.scripts]
+agent-snapshot = "agent_snapshot.cli:main"
+agent-snapshot-mcp = "agent_snapshot.server:main"
+
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
