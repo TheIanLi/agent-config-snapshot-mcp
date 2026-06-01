@@ -1,3 +1,0 @@
-[console_scripts]
-agent-snapshot = agent_snapshot.cli:main
-agent-snapshot-mcp = agent_snapshot.server:main
