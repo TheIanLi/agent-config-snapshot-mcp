@@ -59,6 +59,8 @@ agent-snapshot list hermes_data/SOUL
 agent-snapshot watch --daemon
 ```
 
+> **Platform:** Linux / macOS only. Windows is not currently supported.
+
 ## Installation
 
 ```bash

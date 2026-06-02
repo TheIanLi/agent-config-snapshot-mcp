@@ -1,7 +1,0 @@
-mcp[cli]
-pyyaml
-watchdog
-schedule
-
-[dev]
-pytest
