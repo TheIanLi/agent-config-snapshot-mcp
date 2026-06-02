@@ -5,6 +5,7 @@ import logging
 import os
 import shutil
 import sys
+from importlib.resources import files as _files
 from pathlib import Path
 
 import yaml
@@ -20,8 +21,7 @@ from .snapshot import (
 
 logger = logging.getLogger(__name__)
 
-# 预设模板目录（相对于本模块）
-_PRESETS_DIR = Path(__file__).resolve().parent.parent.parent / "presets"
+_PRESETS_DIR = Path(str(_files("agent_snapshot"))).parent.parent / "presets"
 
 # 常见 agent 数据目录
 _KNOWN_AGENT_DIRS = [

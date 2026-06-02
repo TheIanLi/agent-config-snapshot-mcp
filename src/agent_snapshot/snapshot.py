@@ -143,7 +143,11 @@ def list_snapshots(pf: ProtectedFile, snapshot_dir: Path) -> list[dict]:
     if not dest_dir.exists():
         return []
 
-    snapshots = sorted(dest_dir.glob(f"{pf.path.name}.snapshot.*"), reverse=True)
+    snapshots = sorted(
+        dest_dir.glob(f"{pf.path.name}.snapshot.*"),
+        key=lambda p: _parse_timestamp(p.name),
+        reverse=True,
+    )
     result = []
     for idx, snap in enumerate(snapshots, start=1):
         stat = snap.stat()
