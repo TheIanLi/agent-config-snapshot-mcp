@@ -25,6 +25,12 @@ This tool grew out of that disaster. The idea is simple—virtual machine snapsh
 
 Works as a standalone CLI or as an MCP Server your AI agent can call directly.
 
+## Demo
+
+![Demo](demo.mp4)
+
+> Full walkthrough: init → snapshot → simulate corruption → auto-snapshot → history → diff → rollback → verify.
+
 ## Features
 
 | Feature | CLI | MCP | Description |
