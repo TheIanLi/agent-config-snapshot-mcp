@@ -1,6 +1,8 @@
 # Agent Config Snapshot MCP
 
 > Git-style snapshots for AI agent config files — your safety net when agents go rogue.
+>
+> ⚡ **This is a learning project.** Built while figuring out MCP servers, file watchers, and CLI design. The code is rough in places, the ideas are real, and it actually works. I'm keeping it here as a milestone—and because it genuinely saved my configs more than once.
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue)](https://python.org)
 [![MCP](https://img.shields.io/badge/MCP-compatible-purple)](https://modelcontextprotocol.io/)
