@@ -28,3 +28,6 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 agent_snapshot = ["presets/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

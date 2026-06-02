@@ -5,6 +5,7 @@
 [![Python](https://img.shields.io/badge/Python-3.10+-blue)](https://python.org)
 [![MCP](https://img.shields.io/badge/MCP-compatible-purple)](https://modelcontextprotocol.io/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[![CI](https://github.com/TheIanLi/agent-config-snapshot-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/TheIanLi/agent-config-snapshot-mcp/actions/workflows/test.yml)
 
 ## Why This Exists
 
