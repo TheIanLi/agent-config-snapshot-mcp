@@ -227,20 +227,61 @@ class FileWatcher:
         signal.signal(signal.SIGTERM, self._shutdown)
         signal.signal(signal.SIGINT, self._shutdown)
 
+    def _pid_file_path(self) -> Path:
+        """PID 文件路径，存在快照目录下。"""
+        return self._config.snapshot_dir / "watcher.pid"
+
+    def _acquire_pid_lock(self) -> bool:
+        """获取 PID 锁，防止重复启动。返回 True 表示获取成功。"""
+        pid_file = self._pid_file_path()
+        if pid_file.exists():
+            try:
+                old_pid = int(pid_file.read_text().strip())
+                # 检查旧进程是否还活着
+                os.kill(old_pid, 0)
+                logger.error("watcher 已在运行 (pid=%d)，拒绝重复启动", old_pid)
+                return False
+            except (ValueError, OSError, ProcessLookupError):
+                # 旧 PID 无效或进程已死，覆盖
+                logger.warning("清理残留 PID 文件 (pid 无效或已退出)")
+                pid_file.unlink(missing_ok=True)
+
+        pid_file.write_text(str(os.getpid()))
+        return True
+
+    def _release_pid_lock(self) -> None:
+        """释放 PID 锁。"""
+        pid_file = self._pid_file_path()
+        try:
+            if pid_file.exists() and int(pid_file.read_text().strip()) == os.getpid():
+                pid_file.unlink()
+        except (ValueError, OSError):
+            pass
+
     def _shutdown(self, signum: int, frame: object) -> None:
-        """优雅退出：取消所有 pending timer，停止 observer。"""
+        """优雅退出：flush 所有 pending timer，停止 observer。"""
         logger.info("收到信号 %d，正在退出...", signum)
 
+        # flush pending timers：执行而非丢弃
         with self._debounce_lock:
-            for label, timer in list(self._debounce_timers.items()):
-                timer.cancel()
-                logger.info("已取消 pending timer: %s", label)
+            pending = list(self._debounce_timers.items())
             self._debounce_timers.clear()
+        for label, timer in pending:
+            timer.cancel()
+            logger.info("flush pending timer: %s", label)
+        # 执行 pending 快照（锁外执行，避免死锁）
+        for label, timer in pending:
+            pf, reason = timer.args  # args=[pf, reason]
+            try:
+                self._do_snapshot(pf, reason)
+            except Exception as e:
+                logger.error("flush 快照失败 [%s]: %s", label, e)
 
         if self._observer:
             self._observer.stop()
             self._observer.join(timeout=5)
 
+        self._release_pid_lock()
         logger.info("watcher 已退出。")
         sys.exit(0)
 
@@ -248,8 +289,13 @@ class FileWatcher:
         """前台运行 watcher。"""
         self._setup_signal_handlers()
 
+        if not self._acquire_pid_lock():
+            print("错误: watcher 已在运行。如需重启请先停止旧进程。", file=sys.stderr)
+            sys.exit(1)
+
         logger.info("===== watcher 启动 =====")
         logger.info("启动时间: %s", datetime.now().strftime("%Y-%m-%dT%H:%M:%S"))
+        logger.info("PID: %d, PID 文件: %s", os.getpid(), self._pid_file_path())
         logger.info(
             "监听文件: on_change=%d, daily=%d",
             len(self._on_change_files),
@@ -283,8 +329,18 @@ class FileWatcher:
             self._shutdown(signal.SIGINT, None)
 
     def run_daemon(self) -> None:
-        """后台运行 watcher（nohup）。"""
-        # 使用自身模块启动
+        """后台运行 watcher（nohup），含 PID 锁和启动验证。"""
+        # 先检查是否已有 daemon 在跑
+        pid_file = self._pid_file_path()
+        if pid_file.exists():
+            try:
+                old_pid = int(pid_file.read_text().strip())
+                os.kill(old_pid, 0)
+                print(f"错误: watcher 已在后台运行 (pid={old_pid})", file=sys.stderr)
+                sys.exit(1)
+            except (ValueError, OSError, ProcessLookupError):
+                pid_file.unlink(missing_ok=True)
+
         cmd = [
             sys.executable, "-m", "agent_snapshot", "watch",
         ]
@@ -299,5 +355,27 @@ class FileWatcher:
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
-        print(f"watcher 已在后台启动 (pid={process.pid})")
+
+        # 验证子进程启动
+        time.sleep(1.5)
+        try:
+            os.kill(process.pid, 0)
+        except (OSError, ProcessLookupError):
+            print(
+                f"错误: watcher 子进程未能启动 (pid={process.pid} 已退出)。"
+                f"查看日志: {log_file}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        # 二次确认 PID 文件已被子进程写入
+        if not pid_file.exists():
+            print(
+                f"警告: watcher 子进程已启动 (pid={process.pid})，但 PID 文件未出现。"
+                f"查看日志: {log_file}",
+                file=sys.stderr,
+            )
+        else:
+            child_pid = pid_file.read_text().strip()
+            print(f"watcher 已在后台启动 (pid={child_pid})")
         print(f"日志文件: {log_file}")

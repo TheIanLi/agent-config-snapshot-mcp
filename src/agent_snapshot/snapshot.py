@@ -19,10 +19,23 @@ def _ensure_snapshot_dir(snapshot_dir: Path) -> None:
     snapshot_dir.mkdir(parents=True, exist_ok=True)
 
 
+def _sanitize_label(label: str) -> str:
+    """防路径穿越：将 label 中危险字符替换为下划线。"""
+    # 禁止 .. / \ 和空字节
+    sanitized = label.replace("..", "_").replace("/", "_").replace("\\", "_")
+    sanitized = sanitized.replace("\0", "")
+    # 去掉首尾空白和点（防止隐藏目录）
+    sanitized = sanitized.strip().strip(".")
+    if not sanitized:
+        raise ValueError(f"label 不能为空或全为特殊字符: {label!r}")
+    if sanitized != label:
+        logger.warning("label 已净化: %r -> %r", label, sanitized)
+    return sanitized
+
+
 def _file_snapshot_dir(snapshot_dir: Path, pf: ProtectedFile) -> Path:
     """返回某个受保护文件的快照存放目录。"""
-    # 用原文件名的 hash 做子目录名，避免同名字符串冲突
-    sub = pf.label
+    sub = _sanitize_label(pf.label)
     return snapshot_dir / sub
 
 
@@ -137,19 +150,34 @@ def list_snapshots(pf: ProtectedFile, snapshot_dir: Path) -> list[dict]:
     return result
 
 
+def _is_binary(filepath: Path) -> bool:
+    """检测文件是否为二进制（读前 1024 字节，含 null 则为二进制）。"""
+    try:
+        with open(filepath, "rb") as f:
+            chunk = f.read(1024)
+        return b"\0" in chunk
+    except OSError:
+        return False
+
+
 def get_snapshot_by_index(
     pf: ProtectedFile, snapshot_dir: Path, index: int
 ) -> Path:
     """按序号获取指定快照的文件路径。序号从 1 开始，最新的为 1。"""
     dest_dir = _file_snapshot_dir(snapshot_dir, pf)
     if not dest_dir.exists():
-        raise IndexError(f"没有找到 {pf.label} 的快照")
+        raise IndexError(f"没有找到 {pf.label} 的快照目录: {dest_dir}")
 
     snapshots = sorted(dest_dir.glob(f"{pf.path.name}.snapshot.*"), reverse=True)
+    if not snapshots:
+        raise IndexError(f"「{pf.label}」尚无快照")
     if index < 1 or index > len(snapshots):
         raise IndexError(f"快照序号 {index} 超出范围 (1-{len(snapshots)})")
 
-    return snapshots[index - 1]
+    snap_path = snapshots[index - 1]
+    if not snap_path.exists():
+        raise FileNotFoundError(f"快照文件已被外部删除: {snap_path}")
+    return snap_path
 
 
 def diff_snapshot(pf: ProtectedFile, snapshot_dir: Path, index: int) -> str:
@@ -160,6 +188,10 @@ def diff_snapshot(pf: ProtectedFile, snapshot_dir: Path, index: int) -> str:
 
     if not pf.path.exists():
         raise FileNotFoundError(f"当前文件不存在: {pf.path}")
+
+    # 二进制文件检测
+    if _is_binary(pf.path) or _is_binary(snapshot_path):
+        return "（无法对比：文件为二进制格式）"
 
     with open(snapshot_path, "r", encoding="utf-8", errors="replace") as f:
         old_lines = f.readlines()
@@ -183,8 +215,12 @@ def rollback(
     """回滚到指定快照。回滚前自动对当前版本拍一张快照，防止误操作。"""
     snapshot_path = get_snapshot_by_index(pf, snapshot_dir, index)
 
-    # 回滚前先拍一张安全快照
-    safe_snapshot = create_snapshot(pf, snapshot_dir, max_snapshots, reason="safe")
+    # 回滚前先拍一张安全快照（源文件不存在时跳过，不阻断回滚）
+    safe_snapshot = None
+    if pf.path.exists():
+        safe_snapshot = create_snapshot(pf, snapshot_dir, max_snapshots, reason="safe")
+    else:
+        logger.warning("源文件不存在，跳过安全快照，直接回滚: %s", pf.path)
 
     shutil.copy2(snapshot_path, pf.path)
     timestamp = _parse_timestamp(snapshot_path.name)
@@ -193,11 +229,11 @@ def rollback(
         pf.label,
         index,
         timestamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        safe_snapshot,
+        safe_snapshot or "（跳过）",
     )
 
     return {
         "rolled_back_to": index,
         "snapshot_timestamp": timestamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "safe_snapshot": str(safe_snapshot),
+        "safe_snapshot": str(safe_snapshot) if safe_snapshot else "（源文件在回滚前不存在，未拍安全快照）",
     }

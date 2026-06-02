@@ -123,3 +123,66 @@ def test_rollback_invalid_index(temp_config_file):
     create_snapshot(pf, snap_dir)
     with pytest.raises(IndexError):
         rollback(pf, snap_dir, 99)
+
+
+def test_rollback_source_deleted(temp_config_file):
+    """测试源文件被删除后仍可回滚（safe snapshot 跳过不阻断）。"""
+    pf, snap_dir = temp_config_file
+
+    original = pf.path.read_text()
+    create_snapshot(pf, snap_dir)
+
+    # 删除源文件
+    pf.path.unlink()
+    assert not pf.path.exists()
+
+    # 回滚应该成功恢复
+    result = rollback(pf, snap_dir, 1)
+    assert result["rolled_back_to"] == 1
+    assert pf.path.exists()
+    assert pf.path.read_text() == original
+    # 安全快照因源文件不存在而跳过
+    assert "未拍安全快照" in result["safe_snapshot"]
+
+
+def test_label_sanitization():
+    """测试 label 净化防止路径穿越。"""
+    from agent_snapshot.snapshot import _sanitize_label
+
+    assert _sanitize_label("hermes/config") == "hermes_config"
+    assert _sanitize_label("../ssh") == "__ssh"
+    assert _sanitize_label("a..b") == "a_b"
+    assert _sanitize_label("ok_label") == "ok_label"
+
+    with pytest.raises(ValueError):
+        _sanitize_label(".")
+
+
+def test_binary_diff_detection(temp_config_file):
+    """测试二进制文件 diff 返回提示而非乱码。"""
+    from agent_snapshot.snapshot import _is_binary
+
+    pf, snap_dir = temp_config_file
+    # 创建一个含 null 字节的"二进制"文件
+    pf.path.write_bytes(b"text\0binary")
+    create_snapshot(pf, snap_dir)
+
+    result = diff_snapshot(pf, snap_dir, 1)
+    assert "二进制" in result
+
+
+def test_prune_old_snapshots(temp_config_file):
+    """测试超出上限时自动清理最老快照。"""
+    from agent_snapshot.snapshot import list_snapshots
+
+    pf, snap_dir = temp_config_file
+
+    # 创建超过上限的快照（上限=3）
+    for i in range(5):
+        pf.path.write_text(f"version {i}\n")
+        create_snapshot(pf, snap_dir, max_snapshots=3)
+
+    snaps = list_snapshots(pf, snap_dir)
+    assert len(snaps) == 3
+    # 最老的快照被删，保留的是最新的 3 个
+    assert "version 4" in pf.path.read_text()
