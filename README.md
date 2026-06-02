@@ -1,50 +1,54 @@
 # Agent Config Snapshot MCP
 
-> AI agent 核心配置文件快照备份与回滚工具 —— 让 agent 改配置不再恐惧。
+> Git-style snapshots for AI agent config files — so you can safely let agents modify your settings.
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue)](https://python.org)
 [![MCP](https://img.shields.io/badge/MCP-compatible-purple)](https://modelcontextprotocol.io/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-## 为什么需要它？
+## Why?
 
-AI agent（Claude Code、Hermes、OpenClaw 等）在运行时会修改配置文件——改模型、调参数、写记忆。一次误操作就可能把精心调好的配置毁掉。
+AI agents (Claude Code, Hermes, OpenClaw, etc.) modify config files at runtime — switching models, tweaking parameters, writing to memory. One wrong move and your carefully tuned setup is gone.
 
-**agent-config-snapshot-mcp** 给你的配置文件加上"时间机器"：随时快照、对比差异、一键回滚。作为 MCP Server 运行，agent 可以直接调用它来保护自己。
+**agent-config-snapshot-mcp** gives your config files a time machine: snapshot on demand, diff against history, and rollback with one command. Runs as an MCP Server so agents can protect themselves.
 
-> 真实痛点：Hermes 的 `config.yaml` 被 agent 改坏过，回不来。
+> Real pain point: Hermes' `config.yaml` got corrupted by an agent edit. No way back.
 
-## 功能
+## Features
 
-### MCP Server（供 AI agent 调用）
+### MCP Server (called by AI agents)
 
-| 工具 | 功能 |
-|------|------|
-| `snapshot` | 对指定标签的配置文件拍快照 |
-| `list_snapshots` | 列出某配置文件的所有历史快照 |
-| `diff_snapshot` | 对比当前文件与任意历史快照的差异（unified diff） |
-| `rollback` | 回滚到指定快照（回滚前自动拍一张安全快照防误操作） |
+| Tool | Description |
+|------|-------------|
+| `snapshot` | Take a snapshot of a config file by label |
+| `list_snapshots` | List all historical snapshots for a file |
+| `diff_snapshot` | Show unified diff between current file and any snapshot |
+| `rollback` | Restore a snapshot (auto-saves current version first as a safety net) |
 
-### CLI 模式（手动操作）
+### CLI (manual use)
 
 ```bash
-agent-snapshot snapshot "主配置"     # 拍快照
-agent-snapshot list "主配置"         # 看历史
-agent-snapshot diff "主配置" 3       # 对比差异
-agent-snapshot rollback "主配置" 2   # 回滚
-agent-snapshot watch                 # 后台自动监听
+agent-snapshot snapshot main-config     # take a snapshot
+agent-snapshot list main-config         # view history
+agent-snapshot diff main-config 3       # compare with snapshot #3
+agent-snapshot rollback main-config 2   # roll back to snapshot #2
+agent-snapshot watch                    # start file watcher (foreground)
+agent-snapshot watch --daemon           # start file watcher (background)
 ```
 
-### 文件监听守护进程
+### File Watcher Daemon
 
-支持三种监听模式：
-- **`on_change`** — 文件被修改时自动拍快照（适合 .env、config.yaml）
-- **`daily`** — 每天定时拍快照（适合 MEMORY.md、USER.md）
-- **`manual`** — 仅手动触发
+Three watch modes built-in:
 
-### 预设模板
+- **`on_change`** — auto-snapshot on file modification (ideal for `.env`, `config.yaml`)
+- **`daily`** — scheduled daily snapshot (ideal for `MEMORY.md`, `USER.md`)
+- **`manual`** — only triggered explicitly
 
-开箱即用的预设：
+The daemon runs `watchdog` for real-time file monitoring and `schedule` for daily tasks. No extra plugins needed — both are bundled dependencies.
+
+### Preset Templates
+
+Ready-to-use presets for popular agents:
 
 ```bash
 agent-snapshot init --preset hermes      # Hermes Agent
@@ -52,15 +56,26 @@ agent-snapshot init --preset openclaw    # OpenClaw
 agent-snapshot init --preset claude-code # Claude Code
 ```
 
-也可以交互式扫描自动检测已安装的 agent 目录。
+Or run interactive scan to auto-detect installed agent directories and pick what to protect.
 
-### 安全设计
+### Safety Design
 
-- **回滚前自动快照**：`rollback` 执行前会对当前版本拍一张 `safe` 快照，绝不丢数据
-- **保留上限**：可配置每文件最大快照数，超出自动清理最老的
-- **防覆盖**：同一秒内多次快照自动加计数器后缀
+- **Auto-snapshot before rollback**: every rollback saves the current version as a `safe` snapshot first — you never lose data
+- **Retention cap**: configurable max snapshots per file; oldest get pruned automatically
+- **Collision-proof**: multiple snapshots within the same second get counter suffixes, never overwrite
+- **Permission hardening**: snapshot directory is enforced to `700` (owner-only) since it may contain secrets like `.env`
 
-## 安装
+## Snapshot Types (reason tag)
+
+| Tag | Trigger |
+|-----|---------|
+| `manual` | Manual snapshot command |
+| `on_change` | Auto-triggered by file watcher |
+| `daily` | Scheduled daily task |
+| `safe` | Auto-saved before rollback |
+| `baseline` | Initial baseline on watcher startup |
+
+## Installation
 
 ```bash
 git clone https://github.com/TheIanLi/agent-config-snapshot-mcp.git
@@ -68,23 +83,23 @@ cd agent-config-snapshot-mcp
 uv sync
 ```
 
-## 快速开始
+## Quick Start
 
-### 1. 初始化配置
+### 1. Initialize config
 
 ```bash
-# 使用预设模板
+# Use a preset
 agent-snapshot init --preset hermes
 
-# 或者交互扫描
+# Or interactive scan
 agent-snapshot init
 ```
 
-会在当前目录生成 `snapshot-config.yaml`。
+This creates `snapshot-config.yaml` in the current directory.
 
-### 2. 配置 Claude Code / Hermes / OpenClaw
+### 2. Wire up your agent
 
-在你的 agent 的 MCP 配置中添加：
+Add to your agent's MCP config:
 
 ```json
 {
@@ -98,101 +113,91 @@ agent-snapshot init
 }
 ```
 
-### 3. 开始使用
+### 3. Use it
 
-Agent 可以自动调用四个工具来管理自己的配置文件。你也可以手动操作：
+Your agent can now call the four MCP tools to manage its own config files. You can also use the CLI:
 
 ```bash
-# 拍一张快照
-agent-snapshot snapshot "API密钥"
+# Take a snapshot
+agent-snapshot snapshot api-keys
 
-# 查看历史
-agent-snapshot list "API密钥"
-#   #1  2026-06-02T04:00:00Z  0.5KB  [daily]    .env.snapshot.20260602_040000.daily
-#   #2  2026-06-01T15:30:12Z  0.5KB  [on_change] .env.snapshot.20260601_153012.on_change
+# View history
+agent-snapshot list api-keys
+#   #1  2026-06-02T04:00:00Z  0.5KB  [daily]      .env.snapshot.20260602_040000.daily
+#   #2  2026-06-01T15:30:12Z  0.5KB  [on_change]   .env.snapshot.20260601_153012.on_change
 
-# 看看和三天前有什么区别
-agent-snapshot diff "API密钥" 2
+# See what changed since 3 days ago
+agent-snapshot diff api-keys 2
 
-# 不对，回滚
-agent-snapshot rollback "API密钥" 2
+# Nope, roll it back
+agent-snapshot rollback api-keys 2
 ```
 
-### 4. （可选）后台自动监听
+### 4. (Optional) Start the background watcher
 
 ```bash
 agent-snapshot watch --daemon
 ```
 
-配置文件被改时自动拍快照，记忆文件每天凌晨 4 点自动存档。
+Config files with `watch: on_change` get auto-snapshotted on every edit. Files with `watch: daily` get archived every day at the configured time (default 04:00).
 
-## 配置文件
+## Configuration
 
 ```yaml
 # snapshot-config.yaml
 protected_files:
   - path: ~/.hermes_data/.env
-    label: "API密钥"          # 简短标签，用于命令引用
-    watch: on_change          # on_change | daily | manual
+    label: api-keys              # short label for CLI/MCP reference
+    watch: on_change             # on_change | daily | manual
   - path: ~/.hermes_data/memories/MEMORY.md
-    label: "记忆笔记"
+    label: agent-memory
     watch: daily
 
-snapshot_dir: ~/.agent-snapshots/   # 快照存储目录
-daily_time: "04:00"                 # daily 模式执行时间
+snapshot_dir: ~/.agent-snapshots/    # where snapshots are stored
+daily_time: "04:00"                  # daily snapshot schedule
 retention:
-  max_snapshots_per_file: 50        # 每文件保留上限
+  max_snapshots_per_file: 50         # max snapshots per file before pruning
 ```
 
-快照文件命名格式：`{原文件名}.snapshot.{时间戳}.{reason}`
+Snapshot file naming: `{original_name}.snapshot.{timestamp}.{reason}`
 
-## 快照类型（reason 标签）
-
-| 标签 | 触发方式 |
-|------|----------|
-| `manual` | 手动调用 snapshot |
-| `on_change` | 文件监听自动触发 |
-| `daily` | 定时任务 |
-| `safe` | 回滚前的自动保护快照 |
-| `baseline` | 初始基线（预留） |
-
-## 依赖
+## Dependencies
 
 - Python ≥ 3.10
-- `mcp[cli]` — MCP 协议
-- `pyyaml` — 配置解析
-- `watchdog` — 文件监听
-- `schedule` — 定时任务
+- `mcp[cli]` — MCP protocol
+- `pyyaml` — config parsing
+- `watchdog` — file system monitoring
+- `schedule` — cron-like scheduling
 
-## 目录结构
+## Project Structure
 
 ```
 agent-config-snapshot-mcp/
-├── snapshot-config.yaml      # 配置文件
+├── snapshot-config.yaml      # your config file
 ├── pyproject.toml
-├── presets/                  # 预设模板
+├── presets/                  # preset templates
 │   ├── hermes.yaml
 │   ├── openclaw.yaml
 │   └── claude-code.yaml
 ├── src/agent_snapshot/
-│   ├── server.py             # MCP Server（4 个工具）
-│   ├── snapshot.py           # 快照核心逻辑
-│   ├── config.py             # 配置加载
-│   ├── cli.py                # 命令行界面
-│   ├── watcher.py            # 文件监听守护进程
-│   └── __main__.py           # python -m 入口
+│   ├── server.py             # MCP Server (4 tools)
+│   ├── snapshot.py           # core snapshot logic
+│   ├── config.py             # config loading
+│   ├── cli.py                # command-line interface
+│   ├── watcher.py            # file watcher daemon
+│   └── __main__.py           # python -m entry point
 └── tests/
     ├── test_snapshot.py
     ├── test_cli.py
     └── test_watcher.py
 ```
 
-## 适用场景
+## Use Cases
 
-- 你的 agent 频繁修改配置，你想有"撤销"能力
-- 多 agent 共存的复杂环境（Hermes + OpenClaw + Claude Code）
-- 配置文件被 agent 改坏过，不想再来一次
-- 想要配置变更历史，方便审计和排查
+- Your agent frequently edits configs and you want an undo button
+- Multi-agent environments (Hermes + OpenClaw + Claude Code) where configs overlap
+- You've had configs corrupted by agent edits before and won't risk it again
+- You want a config change history for auditing and troubleshooting
 
 ## License
 
