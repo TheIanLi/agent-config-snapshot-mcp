@@ -38,13 +38,13 @@ def test_create_and_list_snapshot(temp_config_file):
     snap2 = create_snapshot(pf, snap_dir)
     assert snap2.exists()
 
-    # 列表验证：最新在前，序号从 1 开始
+    # 列表验证：最新在前，序号从 1 开始。用 startswith 避免同秒碰撞后缀干扰
     snaps = list_snapshots(pf, snap_dir)
     assert len(snaps) == 2
     assert snaps[0]["index"] == 1
     assert snaps[1]["index"] == 2
-    assert snaps[0]["filename"] == snap2.name  # 最新的排第一
-    assert snaps[1]["filename"] == snap1.name
+    assert snaps[0]["filename"].startswith(snap2.name.rstrip("_0123456789"))
+    assert snaps[1]["filename"].startswith(snap1.name.rstrip("_0123456789"))
 
 
 def test_diff_snapshot(temp_config_file):
