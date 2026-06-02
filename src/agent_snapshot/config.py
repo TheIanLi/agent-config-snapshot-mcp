@@ -10,6 +10,21 @@ import yaml
 logger = logging.getLogger(__name__)
 
 
+def validate_label(label: str) -> str:
+    """防路径穿越：将 label 中危险字符替换为下划线。
+
+    应在数据入口处调用（如 load_config），确保所有下游代码收到的都是安全值。
+    """
+    sanitized = label.replace("..", "_").replace("/", "_").replace("\\", "_")
+    sanitized = sanitized.replace("\0", "")
+    sanitized = sanitized.strip().strip(".")
+    if not sanitized:
+        raise ValueError(f"label 不能为空或全为特殊字符: {label!r}")
+    if sanitized != label:
+        logger.warning("label 已净化: %r -> %r", label, sanitized)
+    return sanitized
+
+
 class ProtectedFile:
     """受保护文件的配置项。"""
 
@@ -35,16 +50,27 @@ class SnapshotConfig:
         self.daily_time = daily_time  # "HH:MM" 格式，daily 模式的执行时间
 
     def get_by_label(self, label: str) -> Optional[ProtectedFile]:
-        """按标签查找受保护文件。"""
+        """按标签查找受保护文件（查找时自动净化输入，保证匹配）。"""
+        sanitized = validate_label(label)
         for pf in self.protected_files:
-            if pf.label == label:
+            if pf.label == sanitized:
                 return pf
         return None
 
 
 def _expand_path(raw: str) -> Path:
-    """展开 ~ 和环境变量，返回绝对路径。"""
-    return Path(os.path.expanduser(raw)).resolve()
+    """展开 ~ 和环境变量，返回绝对路径。
+
+    使用 pwd 读取 /etc/passwd 获取真实家目录，
+    不依赖容易被污染的 $HOME 环境变量。
+    """
+    if raw.startswith("~"):
+        import pwd
+        home = pwd.getpwuid(os.getuid()).pw_dir
+        raw = home + raw[1:]
+    # 展开 $VAR / ${VAR} 环境变量
+    expanded = os.path.expandvars(raw)
+    return Path(expanded).resolve()
 
 
 def load_config(config_path: Optional[str] = None) -> SnapshotConfig:
@@ -68,7 +94,7 @@ def load_config(config_path: Optional[str] = None) -> SnapshotConfig:
     files = []
     for item in data.get("protected_files", []):
         path = _expand_path(item["path"])
-        label = item["label"]
+        label = validate_label(item["label"])
         watch = item.get("watch", "manual")
         files.append(ProtectedFile(path=path, label=label, watch=watch))
 

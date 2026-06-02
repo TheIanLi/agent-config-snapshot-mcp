@@ -2,12 +2,25 @@
 
 import shutil
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+from enum import Enum
 from pathlib import Path
 
 from .config import ProtectedFile
 
 logger = logging.getLogger(__name__)
+
+# 上海时区 UTC+8
+SHA_TZ = timezone(timedelta(hours=8))
+
+
+class SnapshotReason(str, Enum):
+    """快照触发原因枚举，限定合法取值。"""
+    ON_CHANGE = "on_change"
+    DAILY = "daily"
+    BASELINE = "baseline"
+    MANUAL = "manual"
+    SAFE = "safe"
 
 # 快照文件命名：{原文件名}.snapshot.{UTC时间戳}.{reason}
 _TIMESTAMP_FMT = "%Y%m%d_%H%M%S"
@@ -19,23 +32,11 @@ def _ensure_snapshot_dir(snapshot_dir: Path) -> None:
     snapshot_dir.mkdir(parents=True, exist_ok=True)
 
 
-def _sanitize_label(label: str) -> str:
-    """防路径穿越：将 label 中危险字符替换为下划线。"""
-    # 禁止 .. / \ 和空字节
-    sanitized = label.replace("..", "_").replace("/", "_").replace("\\", "_")
-    sanitized = sanitized.replace("\0", "")
-    # 去掉首尾空白和点（防止隐藏目录）
-    sanitized = sanitized.strip().strip(".")
-    if not sanitized:
-        raise ValueError(f"label 不能为空或全为特殊字符: {label!r}")
-    if sanitized != label:
-        logger.warning("label 已净化: %r -> %r", label, sanitized)
-    return sanitized
-
-
 def _file_snapshot_dir(snapshot_dir: Path, pf: ProtectedFile) -> Path:
     """返回某个受保护文件的快照存放目录。"""
-    sub = _sanitize_label(pf.label)
+    from .config import validate_label
+
+    sub = validate_label(pf.label)
     return snapshot_dir / sub
 
 
@@ -79,13 +80,21 @@ def create_snapshot(
     pf: ProtectedFile,
     snapshot_dir: Path,
     max_snapshots: int = 0,
-    reason: str = "manual",
+    reason: SnapshotReason | str = SnapshotReason.MANUAL,
 ) -> Path:
     """对受保护文件拍一份快照，返回快照文件路径。
 
     max_snapshots: 保留上限，拍完后超出则删除最老的快照。0 表示不限制。
-    reason: 触发原因标签（manual / on_change / daily / baseline / safe）。
+    reason: 触发原因标签，优先使用 SnapshotReason 枚举值。
     """
+    # 归一化 reason：str → SnapshotReason
+    if isinstance(reason, str):
+        try:
+            reason = SnapshotReason(reason)
+        except ValueError:
+            logger.warning("未知 reason=%r，回退为 MANUAL", reason)
+            reason = SnapshotReason.MANUAL
+
     if not pf.path.exists():
         raise FileNotFoundError(f"源文件不存在，无法拍快照: {pf.path}")
 
@@ -94,7 +103,7 @@ def create_snapshot(
     _ensure_snapshot_dir(dest_dir)
 
     now = datetime.now(timezone.utc)
-    base_name = _snapshot_name(pf, now, reason)
+    base_name = _snapshot_name(pf, now, reason.value)
     snapshot_file = dest_dir / base_name
 
     # 防止同一秒内多次快照覆盖：已存在则加计数器后缀
@@ -102,11 +111,11 @@ def create_snapshot(
     while snapshot_file.exists():
         name = pf.path.name
         ts = now.strftime(_TIMESTAMP_FMT)
-        snapshot_file = dest_dir / f"{name}.snapshot.{ts}.{reason}_{counter}"
+        snapshot_file = dest_dir / f"{name}.snapshot.{ts}.{reason.value}_{counter}"
         counter += 1
 
     shutil.copy2(pf.path, snapshot_file)
-    logger.info("快照已创建 [%s]: %s -> %s", reason, pf.path, snapshot_file)
+    logger.info("快照已创建 [%s]: %s -> %s", reason.value, pf.path, snapshot_file)
 
     # 按保留策略清理最老的快照
     if max_snapshots > 0:
@@ -138,12 +147,13 @@ def list_snapshots(pf: ProtectedFile, snapshot_dir: Path) -> list[dict]:
     result = []
     for idx, snap in enumerate(snapshots, start=1):
         stat = snap.stat()
-        ts = _parse_timestamp(snap.name)
+        ts_utc = _parse_timestamp(snap.name)
+        ts_sha = ts_utc.astimezone(SHA_TZ)
         result.append({
             "index": idx,
             "filename": snap.name,
             "path": str(snap),
-            "timestamp": ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "timestamp": ts_sha.strftime("%Y-%m-%dT%H:%M:%S+08:00"),
             "size": stat.st_size,
             "reason": _parse_reason(snap.name),
         })
@@ -218,22 +228,23 @@ def rollback(
     # 回滚前先拍一张安全快照（源文件不存在时跳过，不阻断回滚）
     safe_snapshot = None
     if pf.path.exists():
-        safe_snapshot = create_snapshot(pf, snapshot_dir, max_snapshots, reason="safe")
+        safe_snapshot = create_snapshot(pf, snapshot_dir, max_snapshots, reason=SnapshotReason.SAFE)
     else:
         logger.warning("源文件不存在，跳过安全快照，直接回滚: %s", pf.path)
 
     shutil.copy2(snapshot_path, pf.path)
-    timestamp = _parse_timestamp(snapshot_path.name)
+    timestamp_utc = _parse_timestamp(snapshot_path.name)
+    timestamp_sha = timestamp_utc.astimezone(SHA_TZ)
     logger.info(
         "已回滚 %s 到快照 #%d (%s)，安全快照: %s",
         pf.label,
         index,
-        timestamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        timestamp_sha.strftime("%Y-%m-%dT%H:%M:%S+08:00"),
         safe_snapshot or "（跳过）",
     )
 
     return {
         "rolled_back_to": index,
-        "snapshot_timestamp": timestamp.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "snapshot_timestamp": timestamp_sha.strftime("%Y-%m-%dT%H:%M:%S+08:00"),
         "safe_snapshot": str(safe_snapshot) if safe_snapshot else "（源文件在回滚前不存在，未拍安全快照）",
     }

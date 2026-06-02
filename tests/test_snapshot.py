@@ -147,15 +147,15 @@ def test_rollback_source_deleted(temp_config_file):
 
 def test_label_sanitization():
     """测试 label 净化防止路径穿越。"""
-    from agent_snapshot.snapshot import _sanitize_label
+    from agent_snapshot.config import validate_label
 
-    assert _sanitize_label("hermes/config") == "hermes_config"
-    assert _sanitize_label("../ssh") == "__ssh"
-    assert _sanitize_label("a..b") == "a_b"
-    assert _sanitize_label("ok_label") == "ok_label"
+    assert validate_label("hermes/config") == "hermes_config"
+    assert validate_label("../ssh") == "__ssh"
+    assert validate_label("a..b") == "a_b"
+    assert validate_label("ok_label") == "ok_label"
 
     with pytest.raises(ValueError):
-        _sanitize_label(".")
+        validate_label(".")
 
 
 def test_binary_diff_detection(temp_config_file):

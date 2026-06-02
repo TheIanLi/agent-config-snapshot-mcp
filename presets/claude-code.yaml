@@ -3,16 +3,16 @@
 
 protected_files:
   - path: ~/.claude/settings.json
-    label: "用户设置"
+    label: claude/settings
     watch: on_change
   - path: ~/.claude/.credentials.json
-    label: "API凭证"
+    label: claude/.credentials
     watch: on_change
   - path: ~/.claude/plugins/installed_plugins.json
-    label: "已安装插件"
+    label: claude/plugins/installed_plugins
     watch: manual
   - path: ~/.claude/plugins/known_marketplaces.json
-    label: "插件市场"
+    label: claude/plugins/known_marketplaces
     watch: manual
 
 snapshot_dir: ~/.agent-snapshots/

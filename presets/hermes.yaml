@@ -3,28 +3,28 @@
 
 protected_files:
   - path: ~/.hermes_data/config.yaml
-    label: "主配置"
+    label: hermes_data/config
     watch: on_change
   - path: ~/.hermes_data/.env
-    label: "API密钥"
+    label: hermes_data/.env
     watch: on_change
   - path: ~/.hermes_data/auth.json
-    label: "OAuth凭证"
+    label: hermes_data/auth
     watch: on_change
   - path: ~/.hermes_data/SOUL.md
-    label: "人格文件"
+    label: hermes_data/SOUL
     watch: on_change
   - path: ~/.hermes_data/channel_directory.json
-    label: "平台路由"
+    label: hermes_data/channel_directory
     watch: on_change
   - path: ~/.hermes_data/gateway_state.json
-    label: "网关状态"
+    label: hermes_data/gateway_state
     watch: manual
   - path: ~/.hermes_data/memories/MEMORY.md
-    label: "记忆笔记"
+    label: hermes_data/memories/MEMORY
     watch: daily
   - path: ~/.hermes_data/memories/USER.md
-    label: "用户画像"
+    label: hermes_data/memories/USER
     watch: daily
 
 snapshot_dir: ~/.agent-snapshots/

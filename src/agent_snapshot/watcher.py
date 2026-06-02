@@ -1,5 +1,6 @@
 """文件监听守护进程 — 基于 watchdog + schedule 自动拍快照。"""
 
+import fcntl
 import logging
 import os
 import signal
@@ -7,6 +8,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -16,12 +18,25 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from .config import ProtectedFile, SnapshotConfig
-from .snapshot import create_snapshot
+from .snapshot import SnapshotReason, create_snapshot
 
 logger = logging.getLogger("agent-snapshot.watcher")
 
-# 防抖窗口（秒）
+# 防抖窗口（秒）：同一文件连续变动在此时间内合并为一次快照
 _DEBOUNCE_SECONDS = 5
+
+# watchdog observer 停止等待超时（秒）
+_OBSERVER_STOP_TIMEOUT = 5
+
+# daemon 模式：子进程启动后验证等待时间（秒）
+_DAEMON_STARTUP_WAIT = 1.5
+
+
+@dataclass
+class _PendingSnapshot:
+    """存放待执行快照的上下文，避免依赖 threading.Timer.args 的内部结构。"""
+    pf: ProtectedFile
+    trigger: str
 
 
 class _SnapshotHandler(FileSystemEventHandler):
@@ -45,13 +60,15 @@ class _SnapshotHandler(FileSystemEventHandler):
 class FileWatcher:
     """文件监听器：on_change 用 watchdog 实时监听，daily 用 schedule 定时拍快照。"""
 
-    def __init__(self, config: SnapshotConfig) -> None:
+    def __init__(self, config: SnapshotConfig, debounce_seconds: float = _DEBOUNCE_SECONDS) -> None:
         self._config = config
         self._on_change_files: list[ProtectedFile] = []
         self._daily_files: list[ProtectedFile] = []
-        self._debounce_timers: dict[str, threading.Timer] = {}
+        self._debounce_timers: dict[str, tuple[threading.Timer, _PendingSnapshot]] = {}
         self._debounce_lock = threading.Lock()
         self._observer: Optional[Observer] = None
+        self._pid_lock_fd: Optional[int] = None
+        self._debounce_seconds = debounce_seconds
 
         self._setup_logging()
         self._classify_files()
@@ -65,7 +82,7 @@ class FileWatcher:
 
         fmt = logging.Formatter(
             "%(asctime)s [%(levelname)s] %(message)s",
-            datefmt="%Y-%m-%dT%H:%M:%S",
+            datefmt="%Y-%m-%dT%H:%M:%S+08:00",
         )
         logger.setLevel(logging.INFO)
 
@@ -88,15 +105,34 @@ class FileWatcher:
                 self._daily_files.append(pf)
 
     def _check_dir_permissions(self) -> None:
-        """确保快照目录权限为 700（包含敏感文件如 .env）。"""
+        """确保快照目录权限为 700，并验证父目录权限链。
+
+        快照包含敏感文件明文副本（.env / auth.json / credentials.json），
+        整个目录树应限制为仅 owner 可访问。
+        """
         snap_dir = self._config.snapshot_dir
         if not snap_dir.exists():
             return
         try:
+            # 修正目标目录
             mode = snap_dir.stat().st_mode & 0o777
             if mode != 0o700:
                 os.chmod(snap_dir, 0o700)
                 logger.warning("快照目录权限已从 %o 修正为 700: %s", mode, snap_dir)
+            # 检查父目录链：确保父目录不开放 group/other 写权限
+            # 注意：不能用 parent.root（返回 str），用 parent.parent == parent 检测到达根目录
+            parent = snap_dir.parent
+            while parent != parent.parent:
+                try:
+                    p_mode = parent.stat().st_mode & 0o777
+                    if p_mode & 0o022:  # group 或 other 有写权限
+                        logger.warning(
+                            "父目录权限不安全 (%o): %s —— 建议用 chmod 755 或 700 修正",
+                            p_mode, parent,
+                        )
+                except OSError:
+                    pass
+                parent = parent.parent
         except OSError as e:
             logger.error("无法检查/修正快照目录权限: %s", e)
 
@@ -112,7 +148,7 @@ class FileWatcher:
                     pf,
                     self._config.snapshot_dir,
                     self._config.max_snapshots_per_file,
-                    reason="baseline",
+                    reason=SnapshotReason.BASELINE,
                 )
                 logger.info("基线快照: %s -> %s", pf.label, snap_path)
             except Exception as e:
@@ -131,54 +167,61 @@ class FileWatcher:
                 return pf
         return None
 
-    def _on_file_event(self, event_path: str, reason: str) -> None:
+    def _on_file_event(self, event_path: str, trigger: str) -> None:
         """文件变动事件入口，经防抖后拍快照。"""
         pf = self._match_file(event_path)
         if pf is None:
             return
-        self._debounce_snapshot(pf, reason)
+        self._debounce_snapshot(pf, trigger)
 
-    def _debounce_snapshot(self, pf: ProtectedFile, reason: str) -> None:
+    def _debounce_snapshot(self, pf: ProtectedFile, trigger: str) -> None:
         """per-file 防抖：5 秒内同一文件多次变动只拍最后一次。"""
         with self._debounce_lock:
             # 取消已有的 timer
             existing = self._debounce_timers.pop(pf.label, None)
             if existing is not None:
-                existing.cancel()
+                existing[0].cancel()
 
             # 设置新的 timer
+            pending = _PendingSnapshot(pf=pf, trigger=trigger)
             timer = threading.Timer(
-                _DEBOUNCE_SECONDS,
+                self._debounce_seconds,
                 self._do_snapshot,
-                args=[pf, reason],
+                args=[pending],
             )
-            self._debounce_timers[pf.label] = timer
+            self._debounce_timers[pf.label] = (timer, pending)
             timer.start()
 
-    def _do_snapshot(self, pf: ProtectedFile, reason: str) -> None:
-        """实际执行快照（由 debounce timer 触发）。"""
+    def _do_snapshot(self, pending: _PendingSnapshot) -> None:
+        """实际执行快照（由 debounce timer 触发）。
+
+        接收 _PendingSnapshot 而非裸 timer.args，消除对 Thread 内部结构的依赖。
+        """
         with self._debounce_lock:
-            self._debounce_timers.pop(pf.label, None)
+            self._debounce_timers.pop(pending.pf.label, None)
 
         try:
-            if not pf.path.exists():
-                logger.warning("文件不存在，跳过快照: %s", pf.path)
+            if not pending.pf.path.exists():
+                logger.warning("文件不存在，跳过快照: %s", pending.pf.path)
                 return
             snap_path = create_snapshot(
-                pf,
+                pending.pf,
                 self._config.snapshot_dir,
                 self._config.max_snapshots_per_file,
-                reason="on_change",
+                reason=SnapshotReason.ON_CHANGE,
             )
             logger.info(
-                "快照触发 [%s] 原因=%s 文件=%s -> %s",
+                "快照触发 [%s] trigger=%s reason=%s 文件=%s -> %s",
                 datetime.now().strftime("%H:%M:%S"),
-                reason,
-                pf.path,
+                pending.trigger,
+                SnapshotReason.ON_CHANGE.value,
+                pending.pf.path,
                 snap_path,
             )
         except Exception as e:
-            logger.error("快照失败 [%s] 原因=%s: %s", pf.label, reason, e)
+            logger.error(
+                "快照失败 [%s] trigger=%s: %s", pending.pf.label, pending.trigger, e
+            )
 
     def _run_daily_snapshots(self) -> None:
         """执行所有 daily 文件的每日快照。"""
@@ -189,7 +232,7 @@ class FileWatcher:
                     pf,
                     self._config.snapshot_dir,
                     self._config.max_snapshots_per_file,
-                    reason="daily",
+                    reason=SnapshotReason.DAILY,
                 )
                 logger.info("每日快照 [%s]: %s -> %s", now, pf.label, snap_path)
             except Exception as e:
@@ -232,54 +275,63 @@ class FileWatcher:
         return self._config.snapshot_dir / "watcher.pid"
 
     def _acquire_pid_lock(self) -> bool:
-        """获取 PID 锁，防止重复启动。返回 True 表示获取成功。"""
-        pid_file = self._pid_file_path()
-        if pid_file.exists():
-            try:
-                old_pid = int(pid_file.read_text().strip())
-                # 检查旧进程是否还活着
-                os.kill(old_pid, 0)
-                logger.error("watcher 已在运行 (pid=%d)，拒绝重复启动", old_pid)
-                return False
-            except (ValueError, OSError, ProcessLookupError):
-                # 旧 PID 无效或进程已死，覆盖
-                logger.warning("清理残留 PID 文件 (pid 无效或已退出)")
-                pid_file.unlink(missing_ok=True)
+        """获取 PID 锁，防止重复启动。返回 True 表示获取成功。
 
-        pid_file.write_text(str(os.getpid()))
+        使用 POSIX advisory lock (fcntl.flock) 而非 TOCTOU 式的 PID 检查，
+        由内核保证原子性。进程退出时内核自动释放锁。
+        """
+        pid_file = self._pid_file_path()
+        try:
+            fd = os.open(pid_file, os.O_CREAT | os.O_RDWR, 0o644)
+            # 非阻塞排他锁：已被持有时立即返回 EAGAIN
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (IOError, OSError) as e:
+            logger.error("无法获取 PID 锁: %s (watcher 可能已在运行)", e)
+            if 'fd' in locals():
+                os.close(fd)
+            return False
+
+        # 锁已获取，写入当前 PID 并截断文件
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, str(os.getpid()).encode())
+        self._pid_lock_fd = fd
         return True
 
     def _release_pid_lock(self) -> None:
-        """释放 PID 锁。"""
-        pid_file = self._pid_file_path()
+        """释放 PID 锁并删除文件。flock 在 close 时由内核自动释放。"""
+        if self._pid_lock_fd is not None:
+            try:
+                os.close(self._pid_lock_fd)
+            except OSError:
+                pass
+            self._pid_lock_fd = None
         try:
-            if pid_file.exists() and int(pid_file.read_text().strip()) == os.getpid():
-                pid_file.unlink()
-        except (ValueError, OSError):
+            self._pid_file_path().unlink(missing_ok=True)
+        except OSError:
             pass
 
     def _shutdown(self, signum: int, frame: object) -> None:
         """优雅退出：flush 所有 pending timer，停止 observer。"""
         logger.info("收到信号 %d，正在退出...", signum)
 
-        # flush pending timers：执行而非丢弃
+        # 收集所有 pending 快照上下文
         with self._debounce_lock:
             pending = list(self._debounce_timers.items())
             self._debounce_timers.clear()
-        for label, timer in pending:
+        for label, (timer, pending_snap) in pending:
             timer.cancel()
             logger.info("flush pending timer: %s", label)
         # 执行 pending 快照（锁外执行，避免死锁）
-        for label, timer in pending:
-            pf, reason = timer.args  # args=[pf, reason]
+        for label, (timer, pending_snap) in pending:
             try:
-                self._do_snapshot(pf, reason)
+                self._do_snapshot(pending_snap)
             except Exception as e:
                 logger.error("flush 快照失败 [%s]: %s", label, e)
 
         if self._observer:
             self._observer.stop()
-            self._observer.join(timeout=5)
+            self._observer.join(timeout=_OBSERVER_STOP_TIMEOUT)
 
         self._release_pid_lock()
         logger.info("watcher 已退出。")
@@ -300,6 +352,11 @@ class FileWatcher:
             "监听文件: on_change=%d, daily=%d",
             len(self._on_change_files),
             len(self._daily_files),
+        )
+        logger.warning(
+            "安全提醒: 快照以明文形式存储于 %s，包含 .env / auth.json 等敏感文件。"
+            "请确保该目录仅 owner 可读 (chmod 700)。",
+            self._config.snapshot_dir,
         )
         for pf in self._on_change_files:
             logger.info("  [on_change] %s (%s)", pf.label, pf.path)
@@ -330,16 +387,26 @@ class FileWatcher:
 
     def run_daemon(self) -> None:
         """后台运行 watcher（nohup），含 PID 锁和启动验证。"""
-        # 先检查是否已有 daemon 在跑
+        # 用 fcntl 检查是否已有 daemon 在跑（原子性检查）
         pid_file = self._pid_file_path()
-        if pid_file.exists():
+        try:
+            probe_fd = os.open(pid_file, os.O_CREAT | os.O_RDWR, 0o644)
             try:
-                old_pid = int(pid_file.read_text().strip())
-                os.kill(old_pid, 0)
-                print(f"错误: watcher 已在后台运行 (pid={old_pid})", file=sys.stderr)
+                fcntl.flock(probe_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except (IOError, OSError):
+                os.close(probe_fd)
+                try:
+                    old_pid = int(pid_file.read_text().strip())
+                    print(f"错误: watcher 已在后台运行 (pid={old_pid})", file=sys.stderr)
+                except (ValueError, OSError):
+                    print("错误: watcher 已在后台运行 (PID 文件被锁定)", file=sys.stderr)
                 sys.exit(1)
-            except (ValueError, OSError, ProcessLookupError):
-                pid_file.unlink(missing_ok=True)
+            # 锁获取成功，释放探针锁让子进程重新获取
+            fcntl.flock(probe_fd, fcntl.LOCK_UN)
+            os.close(probe_fd)
+        except OSError as e:
+            print(f"错误: 无法访问 PID 文件: {e}", file=sys.stderr)
+            sys.exit(1)
 
         cmd = [
             sys.executable, "-m", "agent_snapshot", "watch",
@@ -357,7 +424,7 @@ class FileWatcher:
             )
 
         # 验证子进程启动
-        time.sleep(1.5)
+        time.sleep(_DAEMON_STARTUP_WAIT)
         try:
             os.kill(process.pid, 0)
         except (OSError, ProcessLookupError):

@@ -4,12 +4,14 @@ import argparse
 import logging
 import os
 import shutil
+import sys
 from pathlib import Path
 
 import yaml
 
 from .config import load_config
 from .snapshot import (
+    SnapshotReason,
     create_snapshot,
     list_snapshots,
     diff_snapshot,
@@ -54,6 +56,9 @@ _WATCH_RULES = {
     "USER.md":             "daily",
 }
 
+# 单文件大小上限（1MB），超过此大小的文件不纳入保护
+_MAX_FILE_SIZE = 1 * 1024 * 1024
+
 # 扫描时排除的文件名（不需要保护的临时/运行时数据）
 _EXCLUDE_FILES = {
     "gateway_state.json",
@@ -68,6 +73,26 @@ _EXCLUDE_FILES = {
 }
 
 
+def _is_config_file(p: Path) -> bool:
+    """过滤器：检查文件是否为应保护的小型配置文件。
+
+    顶层扫描由 caller 额外处理大小限制和特殊文件名排除。
+    """
+    if not p.is_file():
+        return False
+    if p.name in _EXCLUDE_FILES:
+        return False
+    # 特殊文件名（无标准扩展名但属于配置文件）
+    if p.name in (".env",):
+        return True
+    ext = p.suffix.lower()
+    if ext not in (".yaml", ".yml", ".json", ".md"):
+        return False
+    if ext == ".json" and p.stat().st_size >= _MAX_FILE_SIZE:
+        return False
+    return True
+
+
 def _scan_directory(dir_path: Path) -> list[Path]:
     """扫描目录下适合保护的小型配置文件（.yaml/.json/.md/.env 等）。"""
     if not dir_path.exists():
@@ -75,19 +100,16 @@ def _scan_directory(dir_path: Path) -> list[Path]:
 
     found = []
 
-    # 顶层文件：只匹配小配置文件，排除大文件
+    # 顶层文件：匹配小配置文件，排除大文件和特殊数据库文件
+    _TOP_LARGE_FILES = {"models_dev_cache.json", "state.db", "kanban.db"}
     top_patterns = ["*.yaml", "*.yml", "*.json", "*.md", ".env", "SOUL.md"]
     for pattern in top_patterns:
         for p in dir_path.glob(pattern):
-            if not p.is_file():
+            if p.name in _TOP_LARGE_FILES:
                 continue
-            # 跳过明显的大数据文件
-            if p.name in ("models_dev_cache.json", "state.db", "kanban.db"):
+            if not _is_config_file(p):
                 continue
-            # 跳过排除列表中的文件
-            if p.name in _EXCLUDE_FILES:
-                continue
-            if p.stat().st_size > 1024 * 1024:  # 跳过 >1MB 的文件
+            if p.stat().st_size >= _MAX_FILE_SIZE:
                 continue
             found.append(p)
 
@@ -97,24 +119,14 @@ def _scan_directory(dir_path: Path) -> list[Path]:
         if not sub.is_dir():
             continue
         for p in sub.glob("*"):
-            if p.is_file():
-                if p.name in _EXCLUDE_FILES:
-                    continue
-                ext = p.suffix.lower()
-                if ext in (".yaml", ".yml", ".json", ".md"):
-                    if not (ext == ".json" and p.stat().st_size >= 1024 * 1024):
-                        found.append(p)
-        # 递归进入非 cache 的子目录（如 memories/）
+            if _is_config_file(p):
+                found.append(p)
+        # 递归进入非 cache 的子目录
         for child in sub.iterdir():
             if child.is_dir() and child.name not in _SKIP_SUBDIRS:
                 for p in child.glob("*"):
-                    if p.is_file():
-                        if p.name in _EXCLUDE_FILES:
-                            continue
-                        ext = p.suffix.lower()
-                        if ext in (".yaml", ".yml", ".json", ".md"):
-                            if not (ext == ".json" and p.stat().st_size >= 1024 * 1024):
-                                found.append(p)
+                    if _is_config_file(p):
+                        found.append(p)
 
     # 去重并排序
     seen = set()
@@ -273,7 +285,7 @@ def run_snapshot(args: argparse.Namespace) -> None:
     if pf is None:
         return
     snap_path = create_snapshot(
-        pf, cfg.snapshot_dir, cfg.max_snapshots_per_file, reason="manual"
+        pf, cfg.snapshot_dir, cfg.max_snapshots_per_file, reason=SnapshotReason.MANUAL
     )
     print(f"快照已创建: {snap_path}")
 
@@ -392,7 +404,15 @@ def main():
         parser.print_help()
         return
 
-    args.func(args)
+    try:
+        args.func(args)
+    except FileNotFoundError as e:
+        print(f"错误: {e}", file=sys.stderr)
+        if "snapshot-config.yaml" in str(e) or "SNAPSHOT_CONFIG" not in os.environ:
+            print("\n提示: 请先运行 agent-snapshot init 初始化配置文件，"
+                  "或设置 SNAPSHOT_CONFIG 环境变量指向已有的配置文件。",
+                  file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -44,7 +44,7 @@ class TestFileClassification:
     """测试文件按 watch 字段分类。"""
 
     def test_classify_files(self, watcher_config: SnapshotConfig) -> None:
-        w = FileWatcher(watcher_config)
+        w = FileWatcher(watcher_config, debounce_seconds=0.1)
         assert len(w._on_change_files) == 1
         assert w._on_change_files[0].label == "test/on_change_config"
         assert len(w._daily_files) == 1
@@ -52,7 +52,7 @@ class TestFileClassification:
 
     def test_manual_not_classified(self, watcher_config: SnapshotConfig) -> None:
         """manual 模式的文件不进入 on_change 或 daily。"""
-        w = FileWatcher(watcher_config)
+        w = FileWatcher(watcher_config, debounce_seconds=0.1)
         all_watched = {pf.label for pf in w._on_change_files + w._daily_files}
         assert "test/manual" not in all_watched
 
@@ -62,7 +62,7 @@ class TestDebounce:
 
     def test_debounce_single_snapshot(self, watcher_config: SnapshotConfig) -> None:
         """5 秒内同一文件多次变动只产生一次快照。"""
-        w = FileWatcher(watcher_config)
+        w = FileWatcher(watcher_config, debounce_seconds=0.1)
         pf = watcher_config.protected_files[0]  # on_change file
 
         # 直接触发多次事件（绕过 watchdog）
@@ -73,7 +73,7 @@ class TestDebounce:
         w._on_file_event(str(pf.path), "modified")
 
         # 等待防抖窗口结束 + 快照写入
-        time.sleep(6)
+        time.sleep(0.3)
 
         snaps = list_snapshots(pf, watcher_config.snapshot_dir)
         # 应该只有 1 个快照（多次触发被防抖合并）
@@ -89,14 +89,14 @@ class TestDebounce:
         pf2 = ProtectedFile(path=f2, label="test/second", watch="on_change")
         watcher_config.protected_files.append(pf2)
 
-        w = FileWatcher(watcher_config)
+        w = FileWatcher(watcher_config, debounce_seconds=0.1)
         pf1 = watcher_config.protected_files[0]
 
         # 分别触发两个文件
         w._on_file_event(str(pf1.path), "modified")
         w._on_file_event(str(pf2.path), "modified")
 
-        time.sleep(6)
+        time.sleep(0.3)
 
         snaps1 = list_snapshots(pf1, watcher_config.snapshot_dir)
         snaps2 = list_snapshots(pf2, watcher_config.snapshot_dir)
@@ -110,14 +110,14 @@ class TestOnChangeTrigger:
     def test_on_change_creates_snapshot(
         self, watcher_config: SnapshotConfig
     ) -> None:
-        w = FileWatcher(watcher_config)
+        w = FileWatcher(watcher_config, debounce_seconds=0.1)
         pf = watcher_config.protected_files[0]
 
         # 修改文件后触发
         pf.path.write_text("key: modified")
         w._on_file_event(str(pf.path), "modified")
 
-        time.sleep(6)
+        time.sleep(0.3)
 
         snaps = list_snapshots(pf, watcher_config.snapshot_dir)
         assert len(snaps) == 1
@@ -129,7 +129,7 @@ class TestDailyIsolation:
     def test_daily_not_triggered_on_change(
         self, watcher_config: SnapshotConfig
     ) -> None:
-        w = FileWatcher(watcher_config)
+        w = FileWatcher(watcher_config, debounce_seconds=0.1)
         daily_pf = watcher_config.protected_files[1]  # daily
 
         daily_pf.path.write_text("# Updated Memory")
@@ -145,7 +145,7 @@ class TestBaselineSnapshots:
     def test_baseline_snapshot_taken(
         self, watcher_config: SnapshotConfig
     ) -> None:
-        w = FileWatcher(watcher_config)
+        w = FileWatcher(watcher_config, debounce_seconds=0.1)
         w._take_baseline_snapshots()
 
         # on_change 和 daily 文件都应该有基线快照
@@ -166,7 +166,7 @@ class TestOnMovedDestPath:
         self, tmp_path: Path, watcher_config: SnapshotConfig
     ) -> None:
         """模拟原子写入：temp → target，验证匹配的是 dest_path。"""
-        w = FileWatcher(watcher_config)
+        w = FileWatcher(watcher_config, debounce_seconds=0.1)
         pf = watcher_config.protected_files[0]  # on_change file
 
         # 模拟 on_moved：temp 路径是 src，目标路径是 watched file

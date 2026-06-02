@@ -1,4 +1,11 @@
+.gitignore
+README.md
 pyproject.toml
+snapshot-config.yaml
+uv.lock
+presets/claude-code.yaml
+presets/hermes.yaml
+presets/openclaw.yaml
 src/agent_config_snapshot_mcp.egg-info/PKG-INFO
 src/agent_config_snapshot_mcp.egg-info/SOURCES.txt
 src/agent_config_snapshot_mcp.egg-info/dependency_links.txt

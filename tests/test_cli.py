@@ -118,11 +118,18 @@ def test_generate_config_overwrites(tmp_path):
     assert "old" not in content
 
 
-def test_detect_agents():
-    """测试 agent 目录检测。"""
-    detected = _detect_agents()
-    # 用户环境应该至少有一个
-    assert len(detected) >= 1
-    # ~/.hermes_data 应该存在
-    home = str(Path.home())
-    assert any(home in d for d in detected)
+def test_detect_agents(tmp_path):
+    """测试 agent 目录检测：使用 mock 目录而非依赖真实环境。"""
+    from agent_snapshot import cli
+
+    # 构造模拟 agent 目录
+    agent_dir = tmp_path / "mock_agent"
+    agent_dir.mkdir()
+    (agent_dir / "config.yaml").write_text("key: value")
+    (agent_dir / ".env").write_text("TOKEN=secret")
+
+    # Mock _KNOWN_AGENT_DIRS 指向临时目录
+    with mock.patch.object(cli, "_KNOWN_AGENT_DIRS", [agent_dir]):
+        detected = _detect_agents()
+        assert str(agent_dir) in detected
+        assert len(detected[str(agent_dir)]) == 2

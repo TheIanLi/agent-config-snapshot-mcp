@@ -3,22 +3,22 @@
 
 protected_files:
   - path: ~/.openclaw/config.yaml
-    label: "主配置"
+    label: openclaw/config
     watch: on_change
   - path: ~/.openclaw/.env
-    label: "API密钥"
+    label: openclaw/.env
     watch: on_change
   - path: ~/.openclaw/auth.json
-    label: "OAuth凭证"
+    label: openclaw/auth
     watch: on_change
   - path: ~/.openclaw/memories/MEMORY.md
-    label: "记忆笔记"
+    label: openclaw/memories/MEMORY
     watch: daily
   - path: ~/.openclaw/memories/USER.md
-    label: "用户画像"
+    label: openclaw/memories/USER
     watch: daily
   - path: ~/.openclaw/settings.json
-    label: "用户设置"
+    label: openclaw/settings
     watch: on_change
 
 snapshot_dir: ~/.agent-snapshots/
