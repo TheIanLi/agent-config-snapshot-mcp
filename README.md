@@ -27,7 +27,7 @@ Works as a standalone CLI or as an MCP Server your AI agent can call directly.
 
 ## Demo
 
-![Demo](demo.mp4)
+https://github.com/TheIanLi/agent-config-snapshot-mcp/blob/main/demo.mp4
 
 > Full walkthrough: init → snapshot → simulate corruption → auto-snapshot → history → diff → rollback → verify.
 
