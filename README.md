@@ -235,4 +235,4 @@ agent-config-snapshot-mcp/
 
 ## License
 
-MIT
+MIT License
