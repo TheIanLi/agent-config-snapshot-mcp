@@ -28,11 +28,6 @@ Works as a standalone CLI or as an MCP Server your AI agent can call directly.
 ## Demo
 
 
-
-
-
-> Full walkthrough: init → snapshot → simulate corruption → auto-snapshot → history → diff → rollback → verify.
-
 ## Features
 
 | Feature | CLI | MCP | Description |
