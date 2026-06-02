@@ -21,7 +21,7 @@ def validate_label(label: str) -> str:
     if not sanitized:
         raise ValueError(f"label 不能为空或全为特殊字符: {label!r}")
     if sanitized != label:
-        logger.warning("label 已净化: %r -> %r", label, sanitized)
+        logger.debug("label 已净化: %r -> %r", label, sanitized)
     return sanitized
 
 

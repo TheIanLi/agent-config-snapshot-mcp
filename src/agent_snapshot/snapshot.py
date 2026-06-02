@@ -182,7 +182,8 @@ def get_snapshot_by_index(
     if not dest_dir.exists():
         raise IndexError(f"没有找到 {pf.label} 的快照目录: {dest_dir}")
 
-    snapshots = sorted(dest_dir.glob(f"{pf.path.name}.snapshot.*"), reverse=True)
+    snapshots = sorted(dest_dir.glob(f"{pf.path.name}.snapshot.*"),
+                       key=lambda p: _parse_timestamp(p.name), reverse=True)
     if not snapshots:
         raise IndexError(f"「{pf.label}」尚无快照")
     if index < 1 or index > len(snapshots):
