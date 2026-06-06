@@ -6,3 +6,4 @@ dist/
 build/
 snapshot-config.yaml
 .agent-snapshots/
+.claude/

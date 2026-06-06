@@ -61,7 +61,7 @@ def get_config() -> SnapshotConfig:
         mtime = 0.0
     if _cached_config is not None and mtime == _config_mtime:
         return _cached_config
-    _cached_config = load_config()
+    _cached_config = load_config(str(path))
     _config_mtime = mtime
     logger.info("配置已加载（mtime=%.0f），保护 %d 个文件", mtime, len(_cached_config.protected_files))
     return _cached_config

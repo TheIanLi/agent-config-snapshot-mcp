@@ -129,3 +129,30 @@ def test_daily_time_custom(tmp_path):
     )
     config = load_config(str(cfg))
     assert config.daily_time == "06:30"
+
+
+def test_invalid_watch_mode(tmp_path):
+    cfg = tmp_path / "invalid_watch.yaml"
+    cfg.write_text(
+        "protected_files:\n"
+        "  - path: ~/test.yaml\n"
+        "    label: test\n"
+        "    watch: onchange\n"
+        "snapshot_dir: ~/.snaps/\n"
+    )
+    with pytest.raises(ValueError, match="watch 模式无效"):
+        load_config(str(cfg))
+
+
+def test_valid_watch_modes(tmp_path):
+    for mode in ("on_change", "daily", "manual"):
+        cfg = tmp_path / f"valid_{mode}.yaml"
+        cfg.write_text(
+            "protected_files:\n"
+            "  - path: ~/test.yaml\n"
+            "    label: test\n"
+            f"    watch: {mode}\n"
+            "snapshot_dir: ~/.snaps/\n"
+        )
+        config = load_config(str(cfg))
+        assert config.protected_files[0].watch == mode

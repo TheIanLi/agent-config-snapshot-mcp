@@ -61,6 +61,39 @@ class TestConfigPath:
             _config_path()
 
 
+class TestGetConfigFallback:
+    """get_config 在只有 fallback 路径存在时的测试。"""
+
+    def test_fallback_config_loaded(self, tmp_path, monkeypatch):
+        import pwd
+        import agent_snapshot.server as server_module
+
+        # 清除模块级缓存
+        server_module._cached_config = None
+        server_module._config_mtime = 0.0
+
+        # 切换到空目录
+        empty_cwd = tmp_path / "empty"
+        empty_cwd.mkdir()
+        monkeypatch.chdir(empty_cwd)
+        monkeypatch.delenv("SNAPSHOT_CONFIG", raising=False)
+
+        # 创建 fallback 配置文件
+        fallback_dir = tmp_path / ".agent-snapshots"
+        fallback_dir.mkdir()
+        fallback_cfg = fallback_dir / "snapshot-config.yaml"
+        fallback_cfg.write_text("protected_files: []\nsnapshot_dir: ~/.snaps/\n")
+
+        # Mock pwd.getpwuid 返回 tmp_path 作为家目录
+        mock_pwent = mock.Mock()
+        mock_pwent.pw_dir = str(tmp_path)
+        monkeypatch.setattr(pwd, "getpwuid", lambda uid: mock_pwent)
+
+        config = server_module.get_config()
+        assert config is not None
+        assert config.protected_files == []
+
+
 class TestSnapshotSync:
     """_snapshot_sync 测试。"""
 

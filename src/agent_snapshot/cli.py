@@ -21,7 +21,7 @@ from .snapshot import (
 
 logger = logging.getLogger(__name__)
 
-_PRESETS_DIR = Path(str(_files("agent_snapshot"))).parent.parent / "presets"
+_PRESETS_DIR = Path(str(_files("agent_snapshot"))) / "presets"
 
 # 常见 agent 数据目录
 _KNOWN_AGENT_DIRS = [
