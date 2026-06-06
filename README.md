@@ -1,3 +1,6 @@
+[![en](https://img.shields.io/badge/lang-English-red)](README.md)
+[![zh](https://img.shields.io/badge/语言-中文-green)](README_zh.md)
+
 # Agent Config Snapshot MCP
 
 > Git-style snapshots for AI agent config files — your safety net when agents go rogue.
