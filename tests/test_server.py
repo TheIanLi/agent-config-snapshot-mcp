@@ -65,8 +65,8 @@ class TestGetConfigFallback:
     """get_config 在只有 fallback 路径存在时的测试。"""
 
     def test_fallback_config_loaded(self, tmp_path, monkeypatch):
-        import pwd
         import agent_snapshot.server as server_module
+        from agent_snapshot import compat
 
         # 清除模块级缓存
         server_module._cached_config = None
@@ -82,12 +82,13 @@ class TestGetConfigFallback:
         fallback_dir = tmp_path / ".agent-snapshots"
         fallback_dir.mkdir()
         fallback_cfg = fallback_dir / "snapshot-config.yaml"
-        fallback_cfg.write_text("protected_files: []\nsnapshot_dir: ~/.snaps/\n")
+        fallback_cfg.write_text(
+            "protected_files: []\nsnapshot_dir: ~/.snaps/\n", encoding="utf-8"
+        )
 
-        # Mock pwd.getpwuid 返回 tmp_path 作为家目录
-        mock_pwent = mock.Mock()
-        mock_pwent.pw_dir = str(tmp_path)
-        monkeypatch.setattr(pwd, "getpwuid", lambda uid: mock_pwent)
+        # Mock 家目录为 tmp_path。直接替换 compat.get_home（server 现在就调它），
+        # 不碰平台专用的 pwd 模块——这样测试在 Windows 上也能跑（Windows 没有 pwd）。
+        monkeypatch.setattr(compat, "get_home", lambda: tmp_path)
 
         config = server_module.get_config()
         assert config is not None
