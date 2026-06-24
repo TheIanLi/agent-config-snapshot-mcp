@@ -10,6 +10,7 @@ from pathlib import Path
 
 import yaml
 
+from . import compat
 from .config import load_config
 from .snapshot import (
     SnapshotReason,
@@ -23,13 +24,65 @@ logger = logging.getLogger(__name__)
 
 _PRESETS_DIR = Path(str(_files("agent_snapshot"))) / "presets"
 
-# 常见 agent 数据目录
-_KNOWN_AGENT_DIRS = [
-    Path.home() / ".hermes_data",
-    Path.home() / ".hermes",
-    Path.home() / ".openclaw",
-    Path.home() / ".claude",
-]
+
+def _known_agent_dirs() -> list[Path]:
+    """返回所有已知 AI agent 的配置目录候选列表。
+
+    跨平台设计：
+    - POSIX（Linux/macOS）：统一用 compat.get_home() 获取家目录（不依赖 $HOME）
+    - Windows：家目录下的配置 + %APPDATA% 下的配置
+
+    注意：这里只列出候选目录，_detect_agents() 扫描时会自动跳过不存在的目录，
+    所以可以放心多列，宁缺毋滥。
+    """
+    home = compat.get_home()
+    dirs = []
+
+    # ---- 家目录下的 agent 配置（全平台通用） ----
+
+    # Claude Code（Anthropic）
+    dirs.append(home / ".claude")
+    # Hermes Agent
+    dirs.append(home / ".hermes_data")
+    dirs.append(home / ".hermes")
+    # OpenClaw
+    dirs.append(home / ".openclaw")
+    # Google Gemini CLI
+    dirs.append(home / ".gemini")
+    # OpenAI Codex CLI
+    dirs.append(home / ".codex")
+    # Aider（AI pair programming）
+    dirs.append(home / ".aider")
+    # Cursor（AI 代码编辑器）
+    dirs.append(home / ".cursor")
+    # Continue（VS Code AI 插件）
+    dirs.append(home / ".continue")
+    # GitHub Copilot CLI
+    dirs.append(home / ".copilot")
+    # Qwen Code（通义千问代码助手）
+    dirs.append(home / ".qwen")
+    # OpenCode
+    dirs.append(home / ".opencode")
+
+    # ---- XDG 风格路径（仅 POSIX，Windows 不适用） ----
+    if compat.IS_POSIX:
+        # GitHub Copilot CLI（XDG 风格路径）
+        dirs.append(home / ".config" / "github-copilot")
+        # OpenCode（XDG 风格路径）
+        dirs.append(home / ".config" / "opencode")
+
+    # ---- Windows 特有路径：%APPDATA% ----
+    if compat.IS_WINDOWS:
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            appdata_path = Path(appdata)
+            # Cursor 在 Windows 上的配置目录
+            dirs.append(appdata_path / "Cursor")
+            # Continue 在 Windows 上的配置目录
+            dirs.append(appdata_path / "Continue")
+
+    return dirs
+
 
 # 扫描时要跳过的子目录（日志、会话、缓存等大量文件）
 _SKIP_SUBDIRS = {
@@ -38,6 +91,10 @@ _SKIP_SUBDIRS = {
     "session-env", "shell-snapshots", "file-history", "backups",
     "downloads", "paste-cache", "bin", "home", "skills", "skins",
     "platforms", "pairing", "projects",
+    # Gemini CLI 的会话/缓存目录
+    "conversations", "tmp",
+    # Codex CLI 的会话目录
+    "sessions",
 }
 
 # 只在特定子目录中递归扫描（仅这些目录有价值的小配置文件）
@@ -54,6 +111,9 @@ _WATCH_RULES = {
     "settings.json":       "on_change",
     "MEMORY.md":           "daily",
     "USER.md":             "daily",
+    # Gemini / Codex 等 agent 的配置文件
+    "config.toml":         "on_change",
+    "config.json":         "on_change",
 }
 
 # 单文件大小上限（1MB），超过此大小的文件不纳入保护
@@ -77,6 +137,8 @@ def _is_config_file(p: Path) -> bool:
     """过滤器：检查文件是否为应保护的小型配置文件。
 
     顶层扫描由 caller 额外处理大小限制和特殊文件名排除。
+    支持的扩展名：.yaml / .yml / .json / .md / .toml / .env
+    （.toml 是 Gemini CLI、Rust 工具链等常用的配置格式）
     """
     if not p.is_file():
         return False
@@ -86,7 +148,7 @@ def _is_config_file(p: Path) -> bool:
     if p.name in (".env",):
         return True
     ext = p.suffix.lower()
-    if ext not in (".yaml", ".yml", ".json", ".md"):
+    if ext not in (".yaml", ".yml", ".json", ".md", ".toml"):
         return False
     if ext == ".json" and p.stat().st_size >= _MAX_FILE_SIZE:
         return False
@@ -102,7 +164,7 @@ def _scan_directory(dir_path: Path) -> list[Path]:
 
     # 顶层文件：匹配小配置文件，排除大文件和特殊数据库文件
     _TOP_LARGE_FILES = {"models_dev_cache.json", "state.db", "kanban.db"}
-    top_patterns = ["*.yaml", "*.yml", "*.json", "*.md", ".env", "SOUL.md"]
+    top_patterns = ["*.yaml", "*.yml", "*.json", "*.md", ".env", "SOUL.md", "*.toml"]
     for pattern in top_patterns:
         for p in dir_path.glob(pattern):
             if p.name in _TOP_LARGE_FILES:
@@ -139,10 +201,27 @@ def _scan_directory(dir_path: Path) -> list[Path]:
     return result
 
 
-def _detect_agents() -> dict[str, list[Path]]:
-    """扫描所有已知 agent 目录，返回检测结果。"""
+def _detect_agents(extra_dirs: list[Path] | None = None) -> dict[str, list[Path]]:
+    """扫描已知 agent 目录（外加用户用 --scan-dir 指定的目录），返回检测结果。
+
+    extra_dirs: 用户额外指定要扫描的目录。这让本工具能支持任意 agent——
+    哪怕它的目录不在内置已知列表里，也能用 --scan-dir 指过去。
+    """
+    dirs = list(_known_agent_dirs())
+    if extra_dirs:
+        dirs.extend(extra_dirs)
+
     detected = {}
-    for d in _KNOWN_AGENT_DIRS:
+    # 去重：同一目录可能既在已知列表又被 --scan-dir 指定
+    seen: set[Path] = set()
+    for d in dirs:
+        try:
+            key = d.resolve()
+        except OSError:
+            key = d
+        if key in seen:
+            continue
+        seen.add(key)
         files = _scan_directory(d)
         if files:
             detected[str(d)] = files
@@ -188,14 +267,19 @@ def _generate_config(preset_data: dict, output_path: Path) -> Path:
 
 def _interactive_select(detected: dict[str, list[Path]]) -> list[dict]:
     """交互式选择要保护的文件。"""
+    home = compat.get_home()
     print("\n检测到以下 agent 目录及其可保护文件:\n")
 
     dirs = list(detected.keys())
     for i, d in enumerate(dirs, 1):
         print(f"  [{i}] {d}")
         for f in detected[d]:
-            rel = f.relative_to(Path.home())
-            print(f"      - ~/{rel}")
+            try:
+                rel = f.relative_to(home)
+                print(f"      - ~/{rel}")
+            except ValueError:
+                # Windows 上 %APPDATA% 路径无法 relative_to 家目录
+                print(f"      - {f}")
         print()
 
     print("选择要保护的目录（输入序号，多选用逗号分隔，回车=全选）:")
@@ -211,17 +295,33 @@ def _interactive_select(detected: dict[str, list[Path]]) -> list[dict]:
             print("无效输入，跳过。")
             return []
 
-    # 生成 protected_files 条目
+    return _build_protected_files(detected, selected_dirs)
+
+
+def _build_protected_files(
+    detected: dict[str, list[Path]], selected_dirs: list[str]
+) -> list[dict]:
+    """把选中目录里的文件转成 protected_files 配置条目。
+
+    被交互选择和 --all（全选）两条路径共用，避免逻辑重复。
+    """
+    home = compat.get_home()
     files = []
     for d in selected_dirs:
         agent_name = Path(d).name.lstrip(".")
         for f in detected[d]:
-            rel = f.relative_to(Path.home())
-            rel_to_agent = f.relative_to(d)
+            rel_to_agent = f.relative_to(Path(d))
             label = f"{agent_name}/{rel_to_agent.with_suffix('')}"
             watch = _WATCH_RULES.get(f.name, "manual")
+            # 优先用 ~ 相对家目录的写法（跨机器更通用）；
+            # 若文件不在家目录下（如 Windows 上被重定向的 %APPDATA%），退回绝对路径。
+            try:
+                rel = f.relative_to(home)
+                path_str = f"~/{rel.as_posix()}"
+            except ValueError:
+                path_str = str(f)
             files.append({
-                "path": f"~/{rel}",
+                "path": path_str,
                 "label": label,
                 "watch": watch,
             })
@@ -240,8 +340,9 @@ def run_init(args: argparse.Namespace) -> None:
         print(f"已从预设「{args.preset}」生成配置文件: {path}")
         return
 
-    # 扫描模式
-    detected = _detect_agents()
+    # 扫描模式（支持 --scan-dir 指定额外目录，让任意 agent 都能被扫到）
+    extra_dirs = [Path(d).expanduser() for d in (args.scan_dir or [])]
+    detected = _detect_agents(extra_dirs=extra_dirs)
     if not detected:
         presets = _list_presets()
         print("未检测到任何已知 agent 目录。")
@@ -252,8 +353,13 @@ def run_init(args: argparse.Namespace) -> None:
             print("请手动编辑 snapshot-config.yaml 配置文件。")
         return
 
-    # 交互选择
-    files = _interactive_select(detected)
+    if args.all:
+        # 非交互：直接保护检测到的全部文件，跳过逐项询问
+        files = _build_protected_files(detected, list(detected.keys()))
+        print(f"已自动选择检测到的全部 {len(files)} 个文件（--all）。")
+    else:
+        # 交互选择（按目录选，回车 = 全选所有目录）
+        files = _interactive_select(detected)
     if not files:
         print("未选择任何文件，退出。")
         return
@@ -362,6 +468,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--output", "-o",
         default="snapshot-config.yaml",
         help="输出路径 (默认: snapshot-config.yaml)",
+    )
+    init_parser.add_argument(
+        "--scan-dir",
+        action="append",
+        metavar="DIR",
+        help="额外扫描的目录（可多次指定），用于支持内置列表之外的任意 agent，"
+             "例如 --scan-dir ~/.my-agent",
+    )
+    init_parser.add_argument(
+        "--all", "-y",
+        action="store_true",
+        help="非交互模式：直接保护检测到的全部文件，跳过逐项询问",
     )
     init_parser.set_defaults(func=run_init)
 

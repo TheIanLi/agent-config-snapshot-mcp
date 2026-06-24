@@ -13,6 +13,9 @@ from typing import Optional
 #拿取yaml，可以更方便的读取文件
 import yaml
 
+# 跨平台兼容层：集中处理平台差异
+from . import compat
+
 #拿出logging这个工具，用来进行定位输出，有点像高级版的print
 logger = logging.getLogger(__name__)
 
@@ -80,12 +83,12 @@ class SnapshotConfig:
 def _expand_path(raw: str) -> Path:
     """展开 ~ 和环境变量，返回绝对路径。
 
-    使用 pwd 读取 /etc/passwd 获取真实家目录，
-    不依赖容易被污染的 $HOME 环境变量。
+    使用 compat.get_home() 跨平台获取家目录：
+    - POSIX: pwd.getpwuid 读 /etc/passwd（不依赖容易被污染的 $HOME）
+    - Windows: os.path.expanduser 解析 %USERPROFILE%
     """
     if raw.startswith("~"):
-        import pwd
-        home = pwd.getpwuid(os.getuid()).pw_dir
+        home = str(compat.get_home())
         raw = home + raw[1:]
     # 展开 $VAR / ${VAR} 环境变量
     expanded = os.path.expandvars(raw)
@@ -120,6 +123,17 @@ def load_config(config_path: Optional[str] = None) -> SnapshotConfig:
                 f"文件 '{item['path']}' 的 watch 模式无效: '{watch}'，可选: {_VALID_WATCH_MODES}"
             )
         files.append(ProtectedFile(path=path, label=label, watch=watch))
+
+    # 检查重复 label：相同 label 会让快照互相覆盖、且 get_by_label 只能取到第一个，
+    # 导致后面的文件静默失效。这里提前报错，让用户改掉冲突的 label。
+    seen_labels: dict[str, str] = {}
+    for pf in files:
+        if pf.label in seen_labels:
+            raise ValueError(
+                f"配置中存在重复的 label「{pf.label}」："
+                f"{seen_labels[pf.label]} 与 {pf.path}。请为其中一个改用不同的 label。"
+            )
+        seen_labels[pf.label] = str(pf.path)
 
     snapshot_dir = _expand_path(data.get("snapshot_dir", "~/.agent-snapshots/"))
     max_snapshots = data.get("retention", {}).get("max_snapshots_per_file", 50)
