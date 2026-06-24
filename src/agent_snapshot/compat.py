@@ -288,13 +288,20 @@ class PidLock:
         探测结果是瞬时的，不保证后续 acquire 一定成功（TOCTOU），
         但对于"检查 watcher 是否已在运行"这个场景足够用了。
         """
+        from filelock import Timeout
+
         try:
             # 尝试获取锁
             self._lock.acquire(timeout=0)
-        except Exception:
-            # 获取失败，说明锁被占用
+        except Timeout:
+            # 锁被其它进程占用（正常的竞争失败）
             old_pid = self._read_pid()
             return (True, old_pid)
+        except OSError as e:
+            # 真正的故障（锁目录不存在 / 不可写等）：记录真实原因，不要伪装成"已在运行"。
+            # 返回未占用，让后续真正的 acquire() 去触发并暴露同一个错误。
+            logger.error("探测 PID 锁时出错 %s: %s", self._pid_file, e)
+            return (False, None)
 
         # 获取成功，说明锁未被占用，立即释放
         try:

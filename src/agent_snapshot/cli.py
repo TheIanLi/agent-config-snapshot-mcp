@@ -322,12 +322,23 @@ def _build_protected_files(
             entries.append((f, rel_to_agent, agent_name, base_label))
 
     files = []
+    used_labels: set[str] = set()
     for f, rel_to_agent, agent_name, base_label in entries:
-        # 基础 label 唯一就直接用；发生冲突则带上扩展名区分，避免重复 label。
+        # 基础 label 唯一就直接用；同名不同扩展（config.toml + config.json）则带扩展名区分。
         if base_label_counts[base_label] > 1:
             label = f"{agent_name}/{rel_to_agent.as_posix()}"
         else:
             label = base_label
+        # 最终唯一性兜底：同一 agent 可能出现在两个目录候选里
+        # （如 ~/.opencode 和 ~/.config/opencode 都含 config.json），
+        # 上面的扩展名区分仍可能撞车。这里统一补 -2/-3 后缀，确保 label 全局唯一，
+        # 否则会触发 load_config 的重复 label 校验把工具卡死。
+        if label in used_labels:
+            n = 2
+            while f"{label}-{n}" in used_labels:
+                n += 1
+            label = f"{label}-{n}"
+        used_labels.add(label)
         watch = _WATCH_RULES.get(f.name, "manual")
         # 优先用 ~ 相对家目录的写法（跨机器更通用）；
         # 若文件不在家目录下（如 Windows 上被重定向的 %APPDATA%），退回绝对路径。

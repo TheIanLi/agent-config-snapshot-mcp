@@ -114,7 +114,7 @@ def test_generate_config(tmp_path):
     assert result == out
     assert out.exists()
 
-    content = out.read_text()
+    content = out.read_text(encoding="utf-8")
     assert "测试" in content
     assert "~/.snaps/" in content
 
@@ -235,6 +235,26 @@ def test_detect_agents_extra_dirs(tmp_path):
         assert str(custom) in detected
         names = {p.name for p in detected[str(custom)]}
         assert "config.yaml" in names
+
+
+def test_build_protected_files_unique_labels_across_dirs(tmp_path):
+    """同名 agent 出现在两个目录候选（如 ~/.opencode 和 ~/.config/opencode），
+    且各含同名文件时，生成的 label 必须仍然唯一，否则 load_config 会报重复 label。"""
+    from agent_snapshot.cli import _build_protected_files
+
+    d1 = tmp_path / ".opencode"
+    d2 = tmp_path / ".config" / "opencode"
+    d1.mkdir()
+    d2.mkdir(parents=True)
+    (d1 / "config.json").write_text("{}")
+    (d2 / "config.json").write_text("{}")
+
+    detected = {str(d1): [d1 / "config.json"], str(d2): [d2 / "config.json"]}
+    files = _build_protected_files(detected, [str(d1), str(d2)])
+
+    labels = [f["label"] for f in files]
+    assert len(labels) == 2
+    assert len(set(labels)) == 2, f"label 应唯一，实际: {labels}"
 
 
 # ---- 新增测试：preset 完整性 ----
