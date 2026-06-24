@@ -112,6 +112,35 @@ def test_label_traversal_sanitized(tmp_path):
     assert ".." not in config.protected_files[0].label
 
 
+def test_label_windows_invalid_chars_sanitized():
+    """Windows 非法文件名字符 : * ? | < > " 应被净化成下划线（白名单）。"""
+    assert validate_label('a:b*c?d|e<f>g"h') == "a_b_c_d_e_f_g_h"
+
+
+def test_label_windows_reserved_name_escaped():
+    """Windows 保留设备名（CON/NUL/...）不能原样当目录名，需转义。"""
+    result = validate_label("CON")
+    assert result.upper() != "CON"
+
+
+def test_label_windows_reserved_name_with_ext_escaped():
+    """带扩展名的保留名（CON.md）同样要转义，Windows 上 CON.md 仍是保留名。"""
+    result = validate_label("nul.txt")
+    assert result.split(".")[0].upper() != "NUL"
+
+
+def test_invalid_daily_time_raises(tmp_path):
+    """daily_time 格式非法应在加载时报错，而不是等守护进程运行时才崩。"""
+    cfg = tmp_path / "bad_time.yaml"
+    cfg.write_text(
+        "protected_files: []\n"
+        "snapshot_dir: ~/.snaps/\n"
+        "daily_time: not-a-time\n"
+    )
+    with pytest.raises(ValueError, match="daily_time"):
+        load_config(str(cfg))
+
+
 def test_expand_path_with_env(tmp_path, monkeypatch):
     monkeypatch.setenv("TEST_HOME", str(tmp_path))
     cfg = tmp_path / "env.yaml"

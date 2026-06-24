@@ -3,12 +3,14 @@ name = "agent-config-snapshot-mcp"
 version = "0.1.0"
 description = "AI agent 关键配置文件快照备份与回滚 MCP Server"
 requires-python = ">=3.10"
+# 下限锁定主版本：防止某个依赖的破坏性升级静默破坏工具。
+# 对一个保护配置文件的工具来说，依赖行为的稳定性很重要。
 dependencies = [
-    "mcp[cli]",
-    "pyyaml",
-    "watchdog",
-    "schedule",
-    "filelock",
+    "mcp[cli]>=1.0",
+    "pyyaml>=6.0",
+    "watchdog>=3.0",
+    "schedule>=1.2",
+    "filelock>=3.12",
 ]
 
 [project.optional-dependencies]

@@ -3,6 +3,8 @@
 
 #拿取os这个工具，主要用来读取环境变量等等
 import os
+#拿取re这个工具，用来做正则匹配（白名单净化、时间格式校验）
+import re
 #拿取logging这个工具，主要用来输出日志
 import logging
 #在pathlib这个工具中，有一个Path小工具，主要用来处理文件路径，更方便
@@ -21,21 +23,43 @@ logger = logging.getLogger(__name__)
 
 _VALID_WATCH_MODES = {"on_change", "daily", "manual"}
 
+# label 白名单：只允许字母、数字、下划线、点、连字符。其它字符（包括路径分隔符
+# / \ 和 Windows 非法字符 : * ? " < > |，以及空字节）一律替换为下划线。
+# 用白名单而非黑名单，这样将来出现没想到的危险字符也会被默认挡掉。
+_LABEL_DISALLOWED = re.compile(r"[^A-Za-z0-9_.-]")
+
+# Windows 保留设备名：这些名字不能直接当文件/目录名（即使带扩展名，如 CON.txt 也保留）。
+# 在 Windows 上用它们建目录会直接报错，所以净化时要给它们加前缀避开。
+_WINDOWS_RESERVED = (
+    {"CON", "PRN", "AUX", "NUL"}
+    | {f"COM{i}" for i in range(1, 10)}
+    | {f"LPT{i}" for i in range(1, 10)}
+)
+
+# daily_time 合法格式：HH:MM 或 HH:MM:SS（24 小时制）。
+_DAILY_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$")
+
+
 #def造机器，机器名叫validate_label，机器唯一的入口是label并且只能塞进来字符串，吐出字符串
 def validate_label(label: str) -> str:
-    """防路径穿越：将 label 中危险字符替换为下划线。
+    """白名单净化 label：只保留安全字符，并避开 Windows 保留设备名。
 
     应在数据入口处调用（如 load_config），确保所有下游代码收到的都是安全值。
+    label 会被当作快照子目录名，所以必须是单个、跨平台合法的路径片段。
     """
-    #把下面的东西清洗干净，replace：替换。例如将..替换成_....
-    sanitized = label.replace("..", "_").replace("/", "_").replace("\\", "_")
-    #把\0变成空值
-    sanitized = sanitized.replace("\0", "")
-    #把空格和.都去掉，观感好
-    sanitized = sanitized.strip().strip(".")
+    #先去掉首尾空白，再把白名单之外的字符统一替换成下划线
+    sanitized = _LABEL_DISALLOWED.sub("_", label.strip())
+    #把连续 2 个以上的点收成一个下划线（保留 config.json 这种单点，
+    # 但清除 ".." 之类的父目录引用片段）
+    sanitized = re.sub(r"\.{2,}", "_", sanitized)
+    #去掉首尾的点（".config" → "config"，"." → 空）
+    sanitized = sanitized.strip(".")
     #如果sanitized为空，则抛出错误
     if not sanitized:
         raise ValueError(f"label 不能为空或全为特殊字符: {label!r}")
+    #避开 Windows 保留设备名：取第一个点之前的部分判断，命中就加下划线前缀
+    if sanitized.split(".", 1)[0].upper() in _WINDOWS_RESERVED:
+        sanitized = "_" + sanitized
     #如果sanitized不等于label，则输出label已净化
     if sanitized != label:
         logger.debug("label 已净化: %r -> %r", label, sanitized)
@@ -137,7 +161,14 @@ def load_config(config_path: Optional[str] = None) -> SnapshotConfig:
 
     snapshot_dir = _expand_path(data.get("snapshot_dir", "~/.agent-snapshots/"))
     max_snapshots = data.get("retention", {}).get("max_snapshots_per_file", 50)
+
+    # 校验 daily_time 格式：非法值（如 "not-a-time"）若不在此拦下，会等到守护进程
+    # 调用 schedule 时才崩溃，导致后台进程静默挂掉。提前在加载时报错更安全。
     daily_time = data.get("daily_time", "04:00")
+    if not _DAILY_TIME_RE.match(str(daily_time)):
+        raise ValueError(
+            f"daily_time 格式无效: {daily_time!r}，应为 24 小时制的 HH:MM 或 HH:MM:SS（如 '04:00'）"
+        )
 
     logger.info("已加载配置: %d 个受保护文件, 快照目录: %s", len(files), snapshot_dir)
     return SnapshotConfig(
