@@ -189,6 +189,8 @@ class TestSpawnDetached:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        # 等待进程退出
-        process.wait(timeout=5)
+        # 等待进程退出。超时给足 30 秒：子进程本身（sys.exit(0)）瞬间就结束，
+        # 但 Windows CI 机器在负载高时，python.exe 冷启动可能很慢，
+        # 原来的 5 秒在慢机器上会偶发超时（曾在 windows-latest CI 上 flaky）。
+        process.wait(timeout=30)
         assert process.returncode == 0
