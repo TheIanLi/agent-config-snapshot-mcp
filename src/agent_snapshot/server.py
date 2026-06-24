@@ -15,6 +15,7 @@ from agent_snapshot.snapshot import (
     diff_snapshot as _diff_snapshot,
     rollback as _rollback,
 )
+from agent_snapshot import compat
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -36,8 +37,7 @@ def _config_path() -> Path:
     if cwd_path.exists():
         return cwd_path
 
-    import pwd
-    home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    home = compat.get_home()
     fallback = home / ".agent-snapshots" / "snapshot-config.yaml"
     if fallback.exists():
         logger.info("使用 fallback 配置: %s", fallback)

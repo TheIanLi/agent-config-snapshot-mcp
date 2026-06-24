@@ -31,6 +31,21 @@ def test_empty_protected_files(tmp_path):
     assert config.max_snapshots_per_file == 50  # 默认值
 
 
+def test_duplicate_label_raises(tmp_path):
+    """配置里有重复 label 应该报错，避免快照互相覆盖、文件静默失效。"""
+    cfg = tmp_path / "dup.yaml"
+    cfg.write_text(
+        "protected_files:\n"
+        "  - path: ~/.a/config.json\n"
+        "    label: agent/config\n"
+        "  - path: ~/.b/config.json\n"
+        "    label: agent/config\n"
+        "snapshot_dir: ~/.snaps/\n"
+    )
+    with pytest.raises(ValueError, match="重复的 label"):
+        load_config(str(cfg))
+
+
 def test_file_not_found():
     with pytest.raises(FileNotFoundError):
         load_config("/nonexistent/path/config.yaml")

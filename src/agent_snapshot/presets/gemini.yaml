@@ -1,0 +1,17 @@
+# Google Gemini CLI 预设模板
+# 保护 Gemini CLI 的核心配置文件
+
+protected_files:
+  # Gemini CLI 主配置（MCP server、模型偏好等），官方确认位于 ~/.gemini/settings.json
+  - path: ~/.gemini/settings.json
+    label: gemini/settings
+    watch: on_change
+  # Gemini CLI 支持用 .env 注入环境变量/密钥
+  - path: ~/.gemini/.env
+    label: gemini/.env
+    watch: on_change
+
+snapshot_dir: ~/.agent-snapshots/
+daily_time: "04:00"
+retention:
+  max_snapshots_per_file: 50

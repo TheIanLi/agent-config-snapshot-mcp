@@ -61,19 +61,24 @@ class TestDebounce:
     """测试 per-file 防抖机制。"""
 
     def test_debounce_single_snapshot(self, watcher_config: SnapshotConfig) -> None:
-        """5 秒内同一文件多次变动只产生一次快照。"""
-        w = FileWatcher(watcher_config, debounce_seconds=0.1)
+        """5 秒内同一文件多次变动只产生一次快照。
+
+        防抖窗口（0.5s）必须明显大于事件之间的间隔（0.05s），否则在较慢的 CI
+        机器上，第一个防抖定时器可能在第三次事件取消它之前就先触发，导致拍出 2 张
+        快照（曾在 macOS CI 上偶发失败）。窗口放大后留足余量，消除这种时序竞争。
+        """
+        w = FileWatcher(watcher_config, debounce_seconds=0.5)
         pf = watcher_config.protected_files[0]  # on_change file
 
-        # 直接触发多次事件（绕过 watchdog）
+        # 直接触发多次事件（绕过 watchdog），间隔远小于防抖窗口
         w._on_file_event(str(pf.path), "modified")
         time.sleep(0.05)
         w._on_file_event(str(pf.path), "modified")
         time.sleep(0.05)
         w._on_file_event(str(pf.path), "modified")
 
-        # 等待防抖窗口结束 + 快照写入
-        time.sleep(0.3)
+        # 等待防抖窗口结束 + 快照写入（留足余量）
+        time.sleep(0.8)
 
         snaps = list_snapshots(pf, watcher_config.snapshot_dir)
         # 应该只有 1 个快照（多次触发被防抖合并）

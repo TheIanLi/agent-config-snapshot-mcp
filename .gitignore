@@ -7,3 +7,4 @@ build/
 snapshot-config.yaml
 .agent-snapshots/
 .claude/
+.agents/

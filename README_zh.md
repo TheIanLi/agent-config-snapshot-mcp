@@ -69,7 +69,7 @@ agent-snapshot list hermes_data/SOUL
 agent-snapshot watch --daemon
 ```
 
-> **平台：** 仅支持 Linux / macOS。暂不支持 Windows。
+> **平台：** Linux / macOS / Windows
 
 ## 安装
 
@@ -90,12 +90,28 @@ uv sync
 agent-snapshot init --preset hermes       # Hermes Agent
 agent-snapshot init --preset openclaw     # OpenClaw
 agent-snapshot init --preset claude-code  # Claude Code
+agent-snapshot init --preset gemini       # Gemini CLI
+agent-snapshot init --preset codex        # Codex CLI
 
 # 交互式扫描（自动检测已安装的 agents）
 agent-snapshot init
+
+# 扫描额外目录 —— 支持任意 agent，哪怕不在内置列表里
+agent-snapshot init --scan-dir ~/.my-agent
+
+# 非交互：直接保护检测到的全部文件，不再逐项询问
+agent-snapshot init --all
 ```
 
+**扫描原理（重要）：** 检测**不认文件名**，而是扫描每个 agent 目录、把所有"长得像配置的小文件"
+（`.yaml` / `.yml` / `.json` / `.md` / `.toml` / `.env`，且 < 1MB）都收集起来，
+自动跳过 `sessions` / `logs` / `cache` 等大目录。所以某个 agent 的配置叫 `config`、
+`settings.json` 还是 `config.toml` 都能被扫到。选择时是**按目录选**（回车 = 全选所有目录），
+`--all` 则完全跳过询问、一把全保护。
+
 在当前目录生成 `snapshot-config.yaml`。可通过环境变量 `SNAPSHOT_CONFIG` 指定自定义路径。
+
+> 每个文件有唯一的 `label`。重复的 label 会在加载配置时直接报错（否则它们的快照会互相覆盖）。
 
 ### `snapshot` — 手动快照
 
@@ -210,6 +226,8 @@ retention:
 
 > **注意：** MCP 是锦上添花，不是救命稻草。如果 agent 已经崩了，它的 MCP server 大概率也起不来。CLI（`agent-snapshot rollback`）是独立运行的，这才是真正的救生索。
 
+> **Windows 用户注意：** Windows 上使用 ACL（icacls）尽力收紧快照目录权限，但建议用户自行确认该目录仅自己可访问，因为快照里含 .env / auth.json 等明文敏感文件。
+
 ## 安全设计
 
 | 机制 | 细节 |
@@ -217,7 +235,7 @@ retention:
 | 回滚前快照 | 每次 `rollback` 先把当前版本存为 `safe` 快照——零数据丢失风险 |
 | 保留上限 | 每个文件可配置最大快照数，超出自动清理最早的 |
 | 防碰撞 | 同一秒内多次快照自动加计数器后缀，绝不覆盖 |
-| 权限加固 | 快照目录强制设为 `700`（仅属主可访问），因为可能包含 `.env` 等机密文件 |
+| 权限加固 | 快照目录强制设为 `700`（仅属主可访问），因为可能包含 `.env` 等机密文件。Windows 上使用 ACL（icacls）限制仅当前用户可访问。 |
 | 路径消毒 | 标签中的危险字符（`../`、`/`、`\`）自动替换，防止路径穿越 |
 
 ## 项目结构
@@ -230,9 +248,10 @@ agent-config-snapshot-mcp/
 │   ├── config.py          # 配置类型与加载
 │   ├── cli.py             # 命令行接口
 │   ├── watcher.py         # 文件监控守护进程
+│   ├── compat.py          # 跨平台兼容层（POSIX / Windows）
 │   └── __main__.py        # python -m 入口
-├── presets/               # 预设模板（hermes / openclaw / claude-code）
-├── tests/                 # 测试套件（30 条）
+├── presets/               # 预设模板（hermes / openclaw / claude-code / gemini / codex）
+├── tests/                 # 测试套件
 ├── snapshot-config.yaml   # 你的配置文件（init 生成）
 └── pyproject.toml
 ```
@@ -244,6 +263,7 @@ agent-config-snapshot-mcp/
 - [PyYAML](https://pyyaml.org/) — 配置文件解析
 - [watchdog](https://github.com/gorakhargosh/watchdog) — 文件系统监控
 - [schedule](https://github.com/dbader/schedule) — Cron 风格定时调度
+- [filelock](https://github.com/tox-dev/filelock) — 跨平台文件锁（POSIX flock / Windows msvcrt）
 
 ## 许可证
 

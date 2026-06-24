@@ -1,6 +1,5 @@
 """文件监听守护进程 — 基于 watchdog + schedule 自动拍快照。"""
 
-import fcntl
 import logging
 import os
 import signal
@@ -17,6 +16,7 @@ import schedule
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
+from . import compat
 from .config import ProtectedFile, SnapshotConfig
 from .snapshot import SnapshotReason, create_snapshot
 
@@ -67,7 +67,7 @@ class FileWatcher:
         self._debounce_timers: dict[str, tuple[threading.Timer, _PendingSnapshot]] = {}
         self._debounce_lock = threading.Lock()
         self._observer: Optional[Observer] = None
-        self._pid_lock_fd: Optional[int] = None
+        self._pid_lock: Optional[compat.PidLock] = None
         self._debounce_seconds = debounce_seconds
 
         self._setup_logging()
@@ -105,34 +105,22 @@ class FileWatcher:
                 self._daily_files.append(pf)
 
     def _check_dir_permissions(self) -> None:
-        """确保快照目录权限为 700，并验证父目录权限链。
+        """确保快照目录权限安全，并验证父目录权限链。
 
         快照包含敏感文件明文副本（.env / auth.json / credentials.json），
-        整个目录树应限制为仅 owner 可访问。
+        整个目录树应限制为仅 owner/当前用户可访问。
         """
         snap_dir = self._config.snapshot_dir
         if not snap_dir.exists():
             return
         try:
-            # 修正目标目录
-            mode = snap_dir.stat().st_mode & 0o777
-            if mode != 0o700:
-                os.chmod(snap_dir, 0o700)
-                logger.warning("快照目录权限已从 %o 修正为 700: %s", mode, snap_dir)
+            # 使用 compat 层处理平台差异
+            # POSIX: 修正目录权限为 0o700
+            # Windows: 用 icacls 设置 ACL
+            compat.secure_directory(snap_dir)
             # 检查父目录链：确保父目录不开放 group/other 写权限
-            # 注意：不能用 parent.root（返回 str），用 parent.parent == parent 检测到达根目录
-            parent = snap_dir.parent
-            while parent != parent.parent:
-                try:
-                    p_mode = parent.stat().st_mode & 0o777
-                    if p_mode & 0o022:  # group 或 other 有写权限
-                        logger.warning(
-                            "父目录权限不安全 (%o): %s —— 建议用 chmod 755 或 700 修正",
-                            p_mode, parent,
-                        )
-                except OSError:
-                    pass
-                parent = parent.parent
+            # Windows: 直接 return（POSIX 权限位无意义）
+            compat.check_parent_permissions(snap_dir)
         except OSError as e:
             logger.error("无法检查/修正快照目录权限: %s", e)
 
@@ -267,8 +255,7 @@ class FileWatcher:
 
     def _setup_signal_handlers(self) -> None:
         """注册 SIGTERM/SIGINT 做优雅退出。"""
-        signal.signal(signal.SIGTERM, self._shutdown)
-        signal.signal(signal.SIGINT, self._shutdown)
+        compat.install_signal_handlers(self._shutdown)
 
     def _pid_file_path(self) -> Path:
         """PID 文件路径，存在快照目录下。"""
@@ -277,39 +264,23 @@ class FileWatcher:
     def _acquire_pid_lock(self) -> bool:
         """获取 PID 锁，防止重复启动。返回 True 表示获取成功。
 
-        使用 POSIX advisory lock (fcntl.flock) 而非 TOCTOU 式的 PID 检查，
-        由内核保证原子性。进程退出时内核自动释放锁。
+        使用 filelock 库实现跨平台文件锁：
+        - POSIX: 底层用 fcntl.flock
+        - Windows: 底层用 msvcrt.locking
+        由内核/OS 保证原子性，进程退出时自动释放。
         """
-        pid_file = self._pid_file_path()
-        try:
-            fd = os.open(pid_file, os.O_CREAT | os.O_RDWR, 0o644)
-            # 非阻塞排他锁：已被持有时立即返回 EAGAIN
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except (IOError, OSError) as e:
-            logger.error("无法获取 PID 锁: %s (watcher 可能已在运行)", e)
-            if 'fd' in locals():
-                os.close(fd)
+        self._pid_lock = compat.PidLock(self._pid_file_path())
+        if not self._pid_lock.acquire():
+            logger.error("无法获取 PID 锁 (watcher 可能已在运行)")
+            self._pid_lock = None
             return False
-
-        # 锁已获取，写入当前 PID 并截断文件
-        os.ftruncate(fd, 0)
-        os.lseek(fd, 0, os.SEEK_SET)
-        os.write(fd, str(os.getpid()).encode())
-        self._pid_lock_fd = fd
         return True
 
     def _release_pid_lock(self) -> None:
-        """释放 PID 锁并删除文件。flock 在 close 时由内核自动释放。"""
-        if self._pid_lock_fd is not None:
-            try:
-                os.close(self._pid_lock_fd)
-            except OSError:
-                pass
-            self._pid_lock_fd = None
-        try:
-            self._pid_file_path().unlink(missing_ok=True)
-        except OSError:
-            pass
+        """释放 PID 锁并删除 PID 文件。"""
+        if self._pid_lock is not None:
+            self._pid_lock.release()
+            self._pid_lock = None
 
     def _shutdown(self, signum: int, frame: object) -> None:
         """优雅退出：flush 所有 pending timer，停止 observer。"""
@@ -387,25 +358,15 @@ class FileWatcher:
 
     def run_daemon(self) -> None:
         """后台运行 watcher（nohup），含 PID 锁和启动验证。"""
-        # 用 fcntl 检查是否已有 daemon 在跑（原子性检查）
+        # 用 PidLock 检查是否已有 daemon 在跑
         pid_file = self._pid_file_path()
-        try:
-            probe_fd = os.open(pid_file, os.O_CREAT | os.O_RDWR, 0o644)
-            try:
-                fcntl.flock(probe_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except (IOError, OSError):
-                os.close(probe_fd)
-                try:
-                    old_pid = int(pid_file.read_text().strip())
-                    print(f"错误: watcher 已在后台运行 (pid={old_pid})", file=sys.stderr)
-                except (ValueError, OSError):
-                    print("错误: watcher 已在后台运行 (PID 文件被锁定)", file=sys.stderr)
-                sys.exit(1)
-            # 锁获取成功，释放探针锁让子进程重新获取
-            fcntl.flock(probe_fd, fcntl.LOCK_UN)
-            os.close(probe_fd)
-        except OSError as e:
-            print(f"错误: 无法访问 PID 文件: {e}", file=sys.stderr)
+        probe_lock = compat.PidLock(pid_file)
+        is_locked, old_pid = probe_lock.is_locked_by_other()
+        if is_locked:
+            if old_pid:
+                print(f"错误: watcher 已在后台运行 (pid={old_pid})", file=sys.stderr)
+            else:
+                print("错误: watcher 已在后台运行 (PID 文件被锁定)", file=sys.stderr)
             sys.exit(1)
 
         cmd = [
@@ -415,19 +376,18 @@ class FileWatcher:
         with open(log_file, "a", encoding="utf-8") as f:
             f.write(f"\n===== daemon 启动 {datetime.now()} =====\n")
         with open(os.devnull, "r") as devnull:
-            process = subprocess.Popen(
+            process = compat.spawn_detached(
                 cmd,
                 stdin=devnull,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                start_new_session=True,
             )
 
         # 验证子进程启动
         time.sleep(_DAEMON_STARTUP_WAIT)
-        try:
-            os.kill(process.pid, 0)
-        except (OSError, ProcessLookupError):
+        # 用 poll() 检查子进程是否存活（跨平台）
+        # poll() 返回 None = 还活着；返回非 None = 已退出
+        if process.poll() is not None:
             print(
                 f"错误: watcher 子进程未能启动 (pid={process.pid} 已退出)。"
                 f"查看日志: {log_file}",
@@ -443,6 +403,9 @@ class FileWatcher:
                 file=sys.stderr,
             )
         else:
-            child_pid = pid_file.read_text().strip()
-            print(f"watcher 已在后台启动 (pid={child_pid})")
+            try:
+                child_pid = pid_file.read_text(encoding="utf-8").strip()
+                print(f"watcher 已在后台启动 (pid={child_pid})")
+            except OSError:
+                print(f"watcher 已在后台启动 (pid={process.pid})")
         print(f"日志文件: {log_file}")

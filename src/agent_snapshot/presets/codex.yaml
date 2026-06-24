@@ -1,0 +1,17 @@
+# OpenAI Codex CLI 预设模板
+# 保护 Codex CLI 的核心配置文件
+
+protected_files:
+  # Codex CLI 用户级配置，官方确认位于 ~/.codex/config.toml
+  - path: ~/.codex/config.toml
+    label: codex/config
+    watch: on_change
+  # 文件式凭据存储（也可能改用系统钥匙串，此时该文件不存在，属正常）
+  - path: ~/.codex/auth.json
+    label: codex/auth
+    watch: on_change
+
+snapshot_dir: ~/.agent-snapshots/
+daily_time: "04:00"
+retention:
+  max_snapshots_per_file: 50

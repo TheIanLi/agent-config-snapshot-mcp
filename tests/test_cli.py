@@ -12,6 +12,7 @@ from agent_snapshot.cli import (
     _list_presets,
     _load_preset,
     _generate_config,
+    _known_agent_dirs,
 )
 
 
@@ -31,6 +32,15 @@ def test_scan_directory_finds_config_files(tmp_path):
     assert "config.yaml" in names
     assert ".env" in names
     assert "SOUL.md" in names
+
+
+def test_scan_directory_finds_toml(tmp_path):
+    """扫描能找到 .toml 配置文件（Gemini CLI、Codex CLI 等使用）。"""
+    (tmp_path / "config.toml").write_text('[tool]\nkey = "value"')
+
+    result = _scan_directory(tmp_path)
+    names = {p.name for p in result}
+    assert "config.toml" in names
 
 
 def test_scan_directory_skips_subdirs(tmp_path):
@@ -72,6 +82,8 @@ def test_list_presets():
     assert "hermes" in presets
     assert "openclaw" in presets
     assert "claude-code" in presets
+    assert "gemini" in presets
+    assert "codex" in presets
 
 
 def test_load_preset_hermes():
@@ -102,7 +114,7 @@ def test_generate_config(tmp_path):
     assert result == out
     assert out.exists()
 
-    content = out.read_text()
+    content = out.read_text(encoding="utf-8")
     assert "测试" in content
     assert "~/.snaps/" in content
 
@@ -128,8 +140,162 @@ def test_detect_agents(tmp_path):
     (agent_dir / "config.yaml").write_text("key: value")
     (agent_dir / ".env").write_text("TOKEN=secret")
 
-    # Mock _KNOWN_AGENT_DIRS 指向临时目录
-    with mock.patch.object(cli, "_KNOWN_AGENT_DIRS", [agent_dir]):
+    # Mock _known_agent_dirs 指向临时目录
+    with mock.patch.object(cli, "_known_agent_dirs", return_value=[agent_dir]):
         detected = _detect_agents()
         assert str(agent_dir) in detected
         assert len(detected[str(agent_dir)]) == 2
+
+
+# ---- 新增测试：_known_agent_dirs ----
+
+def test_known_agent_dirs_returns_paths():
+    """_known_agent_dirs() 返回的每个元素都应该是 Path 对象。"""
+    dirs = _known_agent_dirs()
+    for d in dirs:
+        assert isinstance(d, Path), f"不是 Path 对象: {d}"
+
+
+def test_known_agent_dirs_contains_expected_agents():
+    """_known_agent_dirs() 应包含常见 agent 目录。"""
+    dirs = _known_agent_dirs()
+    dir_names = {d.name for d in dirs}
+    # 基础 agent（全平台，家目录下以 . 开头）
+    assert ".claude" in dir_names
+    assert ".hermes_data" in dir_names
+    assert ".hermes" in dir_names
+    assert ".openclaw" in dir_names
+    assert ".gemini" in dir_names
+    assert ".codex" in dir_names
+    assert ".aider" in dir_names
+    assert ".cursor" in dir_names
+    assert ".continue" in dir_names
+    assert ".copilot" in dir_names
+    assert ".qwen" in dir_names
+    assert ".opencode" in dir_names
+
+
+def test_known_agent_dirs_uses_absolute_paths():
+    """_known_agent_dirs() 返回的路径应该是绝对路径（因为 compat.get_home() 返回绝对路径）。"""
+    dirs = _known_agent_dirs()
+    for d in dirs:
+        assert d.is_absolute(), f"不是绝对路径: {d}"
+
+
+# ---- 新增测试：模拟新 agent 目录扫描 ----
+
+def test_scan_directory_gemini_agent(tmp_path):
+    """模拟 Gemini agent 目录，验证能扫到 settings.json 和 .env。"""
+    (tmp_path / "settings.json").write_text('{"theme": "dark"}')
+    (tmp_path / ".env").write_text("GEMINI_API_KEY=xxx")
+
+    result = _scan_directory(tmp_path)
+    names = {p.name for p in result}
+    assert "settings.json" in names
+    assert ".env" in names
+
+
+def test_scan_directory_codex_agent(tmp_path):
+    """模拟 Codex agent 目录，验证能扫到 config.toml。"""
+    (tmp_path / "config.toml").write_text('[model]\nname = "o3"')
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=xxx")
+
+    result = _scan_directory(tmp_path)
+    names = {p.name for p in result}
+    assert "config.toml" in names
+    assert ".env" in names
+
+
+def test_detect_agents_with_gemini_dir(tmp_path):
+    """模拟检测 Gemini agent 目录。"""
+    from agent_snapshot import cli
+
+    gemini_dir = tmp_path / ".gemini"
+    gemini_dir.mkdir()
+    (gemini_dir / "settings.json").write_text('{"key": "value"}')
+    (gemini_dir / ".env").write_text("API_KEY=xxx")
+
+    with mock.patch.object(cli, "_known_agent_dirs", return_value=[gemini_dir]):
+        detected = _detect_agents()
+        assert str(gemini_dir) in detected
+        assert len(detected[str(gemini_dir)]) == 2
+
+
+def test_detect_agents_extra_dirs(tmp_path):
+    """--scan-dir 指定的额外目录应被扫描（支持内置列表之外的任意 agent）。"""
+    from agent_snapshot import cli
+
+    custom = tmp_path / "my-custom-agent"
+    custom.mkdir()
+    (custom / "config.yaml").write_text("key: value")
+
+    # 即使内置列表为空，只靠 extra_dirs 也能扫到
+    with mock.patch.object(cli, "_known_agent_dirs", return_value=[]):
+        detected = _detect_agents(extra_dirs=[custom])
+        assert str(custom) in detected
+        names = {p.name for p in detected[str(custom)]}
+        assert "config.yaml" in names
+
+
+def test_build_protected_files_unique_labels_across_dirs(tmp_path):
+    """同名 agent 出现在两个目录候选（如 ~/.opencode 和 ~/.config/opencode），
+    且各含同名文件时，生成的 label 必须仍然唯一，否则 load_config 会报重复 label。"""
+    from agent_snapshot.cli import _build_protected_files
+
+    d1 = tmp_path / ".opencode"
+    d2 = tmp_path / ".config" / "opencode"
+    d1.mkdir()
+    d2.mkdir(parents=True)
+    (d1 / "config.json").write_text("{}")
+    (d2 / "config.json").write_text("{}")
+
+    detected = {str(d1): [d1 / "config.json"], str(d2): [d2 / "config.json"]}
+    files = _build_protected_files(detected, [str(d1), str(d2)])
+
+    labels = [f["label"] for f in files]
+    assert len(labels) == 2
+    assert len(set(labels)) == 2, f"label 应唯一，实际: {labels}"
+
+
+# ---- 新增测试：preset 完整性 ----
+
+def _check_preset_structure(data: dict) -> None:
+    """检查 preset 数据结构是否完整。"""
+    assert "protected_files" in data, "缺少 protected_files 字段"
+    assert "snapshot_dir" in data, "缺少 snapshot_dir 字段"
+    assert isinstance(data["protected_files"], list), "protected_files 应为列表"
+    assert len(data["protected_files"]) > 0, "protected_files 不应为空"
+    for item in data["protected_files"]:
+        assert "path" in item, f"条目缺少 path: {item}"
+        assert "label" in item, f"条目缺少 label: {item}"
+        assert "watch" in item, f"条目缺少 watch: {item}"
+
+
+@pytest.mark.parametrize("preset_name", ["hermes", "openclaw", "claude-code", "gemini", "codex"])
+def test_preset_structure(preset_name):
+    """每个 preset 都应有完整的 protected_files / snapshot_dir 结构。"""
+    data = _load_preset(preset_name)
+    _check_preset_structure(data)
+
+
+def test_preset_gemini_loadable():
+    """gemini preset 可加载且包含预期配置。"""
+    data = _load_preset("gemini")
+    _check_preset_structure(data)
+    labels = [f["label"] for f in data["protected_files"]]
+    assert "gemini/settings" in labels
+
+
+def test_preset_codex_loadable():
+    """codex preset 可加载且包含预期配置。"""
+    data = _load_preset("codex")
+    _check_preset_structure(data)
+    labels = [f["label"] for f in data["protected_files"]]
+    assert "codex/config" in labels
+
+
+def test_preset_codex_contains_toml():
+    """codex preset 应包含 .toml 配置文件。"""
+    data = _load_preset("codex")
+    paths = [f["path"] for f in data["protected_files"]]
+    assert any(".toml" in p for p in paths), f"codex preset 应包含 .toml 文件，实际: {paths}"
