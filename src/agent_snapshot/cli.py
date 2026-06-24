@@ -306,25 +306,41 @@ def _build_protected_files(
     被交互选择和 --all（全选）两条路径共用，避免逻辑重复。
     """
     home = compat.get_home()
-    files = []
+
+    # 先算出每个文件“去掉扩展名”的基础 label，并统计每个基础 label 出现几次。
+    # 同一目录下若存在同名不同扩展（如 config.toml + config.json），去掉扩展名后
+    # 会得到相同 label，进而触发 load_config 的重复 label 校验把工具卡死。
+    entries = []
+    base_label_counts: dict[str, int] = {}
     for d in selected_dirs:
         agent_name = Path(d).name.lstrip(".")
         for f in detected[d]:
             rel_to_agent = f.relative_to(Path(d))
-            label = f"{agent_name}/{rel_to_agent.with_suffix('')}"
-            watch = _WATCH_RULES.get(f.name, "manual")
-            # 优先用 ~ 相对家目录的写法（跨机器更通用）；
-            # 若文件不在家目录下（如 Windows 上被重定向的 %APPDATA%），退回绝对路径。
-            try:
-                rel = f.relative_to(home)
-                path_str = f"~/{rel.as_posix()}"
-            except ValueError:
-                path_str = str(f)
-            files.append({
-                "path": path_str,
-                "label": label,
-                "watch": watch,
-            })
+            # as_posix() 保证跨平台一致（Windows 上不会出现反斜杠）。
+            base_label = f"{agent_name}/{rel_to_agent.with_suffix('').as_posix()}"
+            base_label_counts[base_label] = base_label_counts.get(base_label, 0) + 1
+            entries.append((f, rel_to_agent, agent_name, base_label))
+
+    files = []
+    for f, rel_to_agent, agent_name, base_label in entries:
+        # 基础 label 唯一就直接用；发生冲突则带上扩展名区分，避免重复 label。
+        if base_label_counts[base_label] > 1:
+            label = f"{agent_name}/{rel_to_agent.as_posix()}"
+        else:
+            label = base_label
+        watch = _WATCH_RULES.get(f.name, "manual")
+        # 优先用 ~ 相对家目录的写法（跨机器更通用）；
+        # 若文件不在家目录下（如 Windows 上被重定向的 %APPDATA%），退回绝对路径。
+        try:
+            rel = f.relative_to(home)
+            path_str = f"~/{rel.as_posix()}"
+        except ValueError:
+            path_str = str(f)
+        files.append({
+            "path": path_str,
+            "label": label,
+            "watch": watch,
+        })
 
     return files
 

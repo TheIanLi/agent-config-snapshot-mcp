@@ -242,11 +242,18 @@ class PidLock:
         失败时（已被其它进程持有）：
         - 返回 False
         """
+        from filelock import Timeout
+
         try:
             # timeout=0 表示非阻塞，拿不到就立即抛 Timeout
             self._lock.acquire(timeout=0)
-        except Exception:
-            # filelock.Timeout 或其它异常
+        except Timeout:
+            # 锁被其它进程占用（正常的竞争失败）
+            return False
+        except OSError as e:
+            # 真正的故障（锁目录不存在 / 不可写等），记录真实原因再返回失败，
+            # 否则调用方只会看到"watcher 可能已在运行"的误导信息。
+            logger.error("无法获取 PID 锁文件 %s: %s", self._pid_file, e)
             return False
 
         # 锁已获取，写入当前 PID
