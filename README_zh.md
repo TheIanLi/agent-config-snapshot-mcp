@@ -250,7 +250,7 @@ agent-config-snapshot-mcp/
 │   ├── watcher.py         # 文件监控守护进程
 │   ├── compat.py          # 跨平台兼容层（POSIX / Windows）
 │   └── __main__.py        # python -m 入口
-├── presets/               # 预设模板（hermes / openclaw / claude-code）
+├── presets/               # 预设模板（hermes / openclaw / claude-code / gemini / codex）
 ├── tests/                 # 测试套件
 ├── snapshot-config.yaml   # 你的配置文件（init 生成）
 └── pyproject.toml
