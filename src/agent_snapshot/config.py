@@ -23,10 +23,12 @@ logger = logging.getLogger(__name__)
 
 _VALID_WATCH_MODES = {"on_change", "daily", "manual"}
 
-# label 白名单：只允许字母、数字、下划线、点、连字符。其它字符（包括路径分隔符
-# / \ 和 Windows 非法字符 : * ? " < > |，以及空字节）一律替换为下划线。
+# label 白名单：只允许 Unicode 字词字符（含中文等非 ASCII 字母）、下划线、点、连字符。
+# 其它字符（包括路径分隔符 / \ 和 Windows 非法字符 : * ? " < > |，以及空字节、控制字符）
+# 一律替换为下划线。Python 3 的 str 正则中 \w 默认是 Unicode 感知的，所以 CJK 等
+# 字母会被保留，而路径分隔符/保留字符仍是非字词字符会被净化。
 # 用白名单而非黑名单，这样将来出现没想到的危险字符也会被默认挡掉。
-_LABEL_DISALLOWED = re.compile(r"[^A-Za-z0-9_.-]")
+_LABEL_DISALLOWED = re.compile(r"[^\w.-]")
 
 # Windows 保留设备名：这些名字不能直接当文件/目录名（即使带扩展名，如 CON.txt 也保留）。
 # 在 Windows 上用它们建目录会直接报错，所以净化时要给它们加前缀避开。
@@ -37,7 +39,7 @@ _WINDOWS_RESERVED = (
 )
 
 # daily_time 合法格式：HH:MM 或 HH:MM:SS（24 小时制）。
-_DAILY_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$")
+_DAILY_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$")
 
 
 #def造机器，机器名叫validate_label，机器唯一的入口是label并且只能塞进来字符串，吐出字符串

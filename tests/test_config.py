@@ -129,6 +129,16 @@ def test_label_windows_reserved_name_with_ext_escaped():
     assert result.split(".")[0].upper() != "NUL"
 
 
+def test_label_cjk_preserved():
+    """非 ASCII（中文）label 应被保留，不能整段被替换成下划线。"""
+    assert validate_label("我的配置") == "我的配置"
+
+
+def test_label_distinct_cjk_stay_distinct():
+    """两个不同的中文 label 净化后仍要保持不同，避免误判重复。"""
+    assert validate_label("配置一") != validate_label("配置二")
+
+
 def test_invalid_daily_time_raises(tmp_path):
     """daily_time 格式非法应在加载时报错，而不是等守护进程运行时才崩。"""
     cfg = tmp_path / "bad_time.yaml"
@@ -136,6 +146,18 @@ def test_invalid_daily_time_raises(tmp_path):
         "protected_files: []\n"
         "snapshot_dir: ~/.snaps/\n"
         "daily_time: not-a-time\n"
+    )
+    with pytest.raises(ValueError, match="daily_time"):
+        load_config(str(cfg))
+
+
+def test_single_digit_hour_daily_time_raises(tmp_path):
+    """单数字小时（如 '4:00'）能通过校验却会让 schedule.day.at() 崩溃，应被拒绝。"""
+    cfg = tmp_path / "single_digit_time.yaml"
+    cfg.write_text(
+        "protected_files: []\n"
+        "snapshot_dir: ~/.snaps/\n"
+        "daily_time: '4:00'\n"
     )
     with pytest.raises(ValueError, match="daily_time"):
         load_config(str(cfg))
