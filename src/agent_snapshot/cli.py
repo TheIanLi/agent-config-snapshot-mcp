@@ -91,10 +91,8 @@ _SKIP_SUBDIRS = {
     "session-env", "shell-snapshots", "file-history", "backups",
     "downloads", "paste-cache", "bin", "home", "skills", "skins",
     "platforms", "pairing", "projects",
-    # Gemini CLI 的会话/缓存目录
+    # Gemini CLI 的会话/缓存目录（"sessions" 已在上面列出，集合自动去重）
     "conversations", "tmp",
-    # Codex CLI 的会话目录
-    "sessions",
 }
 
 # 只在特定子目录中递归扫描（仅这些目录有价值的小配置文件）
@@ -146,11 +144,13 @@ def _is_config_file(p: Path) -> bool:
         return False
     # 特殊文件名（无标准扩展名但属于配置文件）
     if p.name in (".env",):
-        return True
+        return p.stat().st_size < _MAX_FILE_SIZE
     ext = p.suffix.lower()
     if ext not in (".yaml", ".yml", ".json", ".md", ".toml"):
         return False
-    if ext == ".json" and p.stat().st_size >= _MAX_FILE_SIZE:
+    # 大小上限对所有受支持扩展名生效（之前只检查 .json，导致大 .toml/.md/.yaml
+    # 在子目录扫描时漏过——子目录扫描只走本函数，没有顶层那层额外的大小兜底）。
+    if p.stat().st_size >= _MAX_FILE_SIZE:
         return False
     return True
 

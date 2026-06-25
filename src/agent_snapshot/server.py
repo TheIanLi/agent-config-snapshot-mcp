@@ -3,6 +3,7 @@
 import asyncio
 import os
 import logging
+import threading
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -25,6 +26,9 @@ app = FastMCP("agent-config-snapshot-mcp")
 # 配置缓存：仅在配置文件 mtime 变更时才重新加载
 _cached_config: SnapshotConfig | None = None
 _config_mtime: float = 0.0
+# 缓存锁：MCP 工具经 asyncio.to_thread 在线程池里并发调用 get_config，
+# 用锁把"检查缓存→加载→写回"做成原子操作，避免并发重复加载或读到半初始化状态。
+_config_lock = threading.Lock()
 
 
 def _config_path() -> Path:
@@ -59,12 +63,17 @@ def get_config() -> SnapshotConfig:
         mtime = path.stat().st_mtime
     except OSError:
         mtime = 0.0
-    if _cached_config is not None and mtime == _config_mtime:
+    with _config_lock:
+        if _cached_config is not None and mtime == _config_mtime:
+            return _cached_config
+        _cached_config = load_config(str(path))
+        _config_mtime = mtime
+        logger.info(
+            "配置已加载（mtime=%.0f），保护 %d 个文件",
+            mtime,
+            len(_cached_config.protected_files),
+        )
         return _cached_config
-    _cached_config = load_config(str(path))
-    _config_mtime = mtime
-    logger.info("配置已加载（mtime=%.0f），保护 %d 个文件", mtime, len(_cached_config.protected_files))
-    return _cached_config
 
 
 @app.tool()

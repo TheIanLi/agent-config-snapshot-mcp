@@ -95,6 +95,63 @@ class TestGetConfigFallback:
         assert config.protected_files == []
 
 
+class TestConcurrentGetConfig:
+    """get_config 并发安全：MCP 工具经 asyncio.to_thread 并发调用时不应重复加载/竞态。"""
+
+    def test_concurrent_get_config_loads_once(self, tmp_path, monkeypatch):
+        import threading
+        import time
+        import agent_snapshot.server as server_module
+
+        # 冷缓存起步
+        server_module._cached_config = None
+        server_module._config_mtime = 0.0
+
+        cfg_file = tmp_path / "snapshot-config.yaml"
+        cfg_file.write_text(
+            "protected_files: []\nsnapshot_dir: ~/.snaps/\n", encoding="utf-8"
+        )
+        monkeypatch.setenv("SNAPSHOT_CONFIG", str(cfg_file))
+
+        # 包一层计数 + 故意拖慢，放大竞态窗口：无锁时多个线程会同时进冷缓存分支
+        call_count = 0
+        count_lock = threading.Lock()
+        real_load = server_module.load_config
+
+        def counting_load(path):
+            nonlocal call_count
+            with count_lock:
+                call_count += 1
+            time.sleep(0.05)
+            return real_load(path)
+
+        monkeypatch.setattr(server_module, "load_config", counting_load)
+
+        n = 10
+        barrier = threading.Barrier(n)
+        results = []
+        res_lock = threading.Lock()
+
+        def worker():
+            barrier.wait()  # 让 n 个线程尽量同时冲进 get_config
+            cfg = server_module.get_config()
+            with res_lock:
+                results.append(cfg)
+
+        threads = [threading.Thread(target=worker) for _ in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        try:
+            assert call_count == 1, f"配置应只加载一次，实际加载 {call_count} 次"
+            assert all(c is results[0] for c in results), "所有线程应拿到同一个配置对象"
+        finally:
+            server_module._cached_config = None
+            server_module._config_mtime = 0.0
+
+
 class TestSnapshotSync:
     """_snapshot_sync 测试。"""
 

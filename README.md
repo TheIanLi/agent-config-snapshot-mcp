@@ -201,7 +201,7 @@ protected_files:
     watch: daily
 
 snapshot_dir: ~/.agent-snapshots/      # Where snapshots are stored
-daily_time: "04:00"                    # Daily schedule (HH:MM)
+daily_time: "04:00"                    # Daily schedule, 24-hour HH:MM or HH:MM:SS (validated at load)
 retention:
   max_snapshots_per_file: 50           # Max snapshots before pruning
 ```
@@ -236,7 +236,7 @@ Your agent gains 4 MCP tools: `snapshot`, `list_snapshots`, `diff_snapshot`, `ro
 | Retention cap | Configurable max snapshots per file; oldest pruned automatically |
 | Collision-proof | Multiple snapshots within the same second get counter suffixes, never overwrite |
 | Permission hardening | Snapshot directory enforced to `700` (owner-only) since it may contain secrets like `.env`. On Windows, uses ACL via `icacls` to restrict access to current user only. |
-| Path sanitization | Dangerous characters in labels (`../`, `/`, `\`) are automatically replaced to prevent path traversal |
+| Path sanitization | Labels are whitelist-sanitized — Unicode letters and digits (including CJK/Chinese), plus `_ . -`, are kept; everything else (path separators `/` `\`, Windows-illegal `: * ? " < > |`, null bytes, control characters) becomes `_`, consecutive dots are collapsed, and Windows reserved device names (`CON`, `NUL`, `COM1`…) are prefixed. Chinese/non-ASCII labels are preserved, not turned into underscores. Prevents path traversal and yields a cross-platform-safe directory name |
 
 ## Project Structure
 
@@ -259,11 +259,11 @@ agent-config-snapshot-mcp/
 ## Dependencies
 
 - Python ≥ 3.10
-- [mcp](https://github.com/modelcontextprotocol/python-sdk) — MCP protocol
-- [PyYAML](https://pyyaml.org/) — Config file parsing
-- [watchdog](https://github.com/gorakhargosh/watchdog) — File system monitoring
-- [schedule](https://github.com/dbader/schedule) — Cron-like scheduling
-- [filelock](https://github.com/tox-dev/filelock) — Cross-platform file locking (POSIX flock / Windows msvcrt)
+- [mcp](https://github.com/modelcontextprotocol/python-sdk) ≥ 1.0 — MCP protocol
+- [PyYAML](https://pyyaml.org/) ≥ 6.0 — Config file parsing
+- [watchdog](https://github.com/gorakhargosh/watchdog) ≥ 3.0 — File system monitoring
+- [schedule](https://github.com/dbader/schedule) ≥ 1.2 — Cron-like scheduling
+- [filelock](https://github.com/tox-dev/filelock) ≥ 3.12 — Cross-platform file locking (POSIX flock / Windows msvcrt)
 
 ## License
 

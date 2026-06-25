@@ -201,7 +201,7 @@ protected_files:
     watch: daily
 
 snapshot_dir: ~/.agent-snapshots/      # 快照存储路径
-daily_time: "04:00"                    # 每日快照时间（HH:MM）
+daily_time: "04:00"                    # 每日快照时间，24 小时制 HH:MM 或 HH:MM:SS（加载时校验）
 retention:
   max_snapshots_per_file: 50           # 每个文件最大快照数，超出自动清理
 ```
@@ -236,7 +236,7 @@ retention:
 | 保留上限 | 每个文件可配置最大快照数，超出自动清理最早的 |
 | 防碰撞 | 同一秒内多次快照自动加计数器后缀，绝不覆盖 |
 | 权限加固 | 快照目录强制设为 `700`（仅属主可访问），因为可能包含 `.env` 等机密文件。Windows 上使用 ACL（icacls）限制仅当前用户可访问。 |
-| 路径消毒 | 标签中的危险字符（`../`、`/`、`\`）自动替换，防止路径穿越 |
+| 路径消毒 | 标签按白名单净化——保留 Unicode 字母和数字（含中文等 CJK 字符）以及 `_ . -`，其余字符（路径分隔符 `/` `\`、Windows 非法字符 `: * ? " < > |`、空字节、控制字符）一律替换为 `_`，连续的点会被收拢，并给 Windows 保留设备名（`CON`、`NUL`、`COM1`…）加前缀。中文/非 ASCII 标签会被保留，不会变成下划线。防止路径穿越，并生成跨平台合法的目录名 |
 
 ## 项目结构
 
@@ -259,11 +259,11 @@ agent-config-snapshot-mcp/
 ## 依赖
 
 - Python ≥ 3.10
-- [mcp](https://github.com/modelcontextprotocol/python-sdk) — MCP 协议
-- [PyYAML](https://pyyaml.org/) — 配置文件解析
-- [watchdog](https://github.com/gorakhargosh/watchdog) — 文件系统监控
-- [schedule](https://github.com/dbader/schedule) — Cron 风格定时调度
-- [filelock](https://github.com/tox-dev/filelock) — 跨平台文件锁（POSIX flock / Windows msvcrt）
+- [mcp](https://github.com/modelcontextprotocol/python-sdk) ≥ 1.0 — MCP 协议
+- [PyYAML](https://pyyaml.org/) ≥ 6.0 — 配置文件解析
+- [watchdog](https://github.com/gorakhargosh/watchdog) ≥ 3.0 — 文件系统监控
+- [schedule](https://github.com/dbader/schedule) ≥ 1.2 — Cron 风格定时调度
+- [filelock](https://github.com/tox-dev/filelock) ≥ 3.12 — 跨平台文件锁（POSIX flock / Windows msvcrt）
 
 ## 许可证
 

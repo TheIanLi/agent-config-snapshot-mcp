@@ -13,7 +13,23 @@ from agent_snapshot.cli import (
     _load_preset,
     _generate_config,
     _known_agent_dirs,
+    _is_config_file,
+    _MAX_FILE_SIZE,
 )
+
+
+def test_large_toml_excluded(tmp_path):
+    """超过大小上限的 .toml 不应被纳入保护（之前只对 .json 做了大小检查）。"""
+    big = tmp_path / "config.toml"
+    big.write_text("x" * (_MAX_FILE_SIZE + 10))
+    assert _is_config_file(big) is False
+
+
+def test_small_toml_included(tmp_path):
+    """正常大小的 .toml 仍应被识别为配置文件。"""
+    small = tmp_path / "config.toml"
+    small.write_text("key = 'value'")
+    assert _is_config_file(small) is True
 
 
 def test_scan_directory_empty(tmp_path):

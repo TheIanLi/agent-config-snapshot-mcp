@@ -25,12 +25,12 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "filelock" },
-    { name = "mcp", extras = ["cli"] },
+    { name = "filelock", specifier = ">=3.12" },
+    { name = "mcp", extras = ["cli"], specifier = ">=1.0" },
     { name = "pytest", marker = "extra == 'dev'" },
-    { name = "pyyaml" },
-    { name = "schedule" },
-    { name = "watchdog" },
+    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "schedule", specifier = ">=1.2" },
+    { name = "watchdog", specifier = ">=3.0" },
 ]
 provides-extras = ["dev"]
 
