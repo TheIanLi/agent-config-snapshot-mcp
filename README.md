@@ -236,7 +236,7 @@ Your agent gains 4 MCP tools: `snapshot`, `list_snapshots`, `diff_snapshot`, `ro
 | Retention cap | Configurable max snapshots per file; oldest pruned automatically |
 | Collision-proof | Multiple snapshots within the same second get counter suffixes, never overwrite |
 | Permission hardening | Snapshot directory enforced to `700` (owner-only) since it may contain secrets like `.env`. On Windows, uses ACL via `icacls` to restrict access to current user only. |
-| Path sanitization | Labels are whitelist-sanitized — only `A–Z a–z 0–9 _ . -` are kept; everything else (path separators `/` `\`, Windows-illegal `: * ? " < > |`, null bytes, `..` sequences) becomes `_`, and Windows reserved device names (`CON`, `NUL`, `COM1`…) are prefixed. Prevents path traversal and yields a cross-platform-safe directory name |
+| Path sanitization | Labels are whitelist-sanitized — Unicode letters and digits (including CJK/Chinese), plus `_ . -`, are kept; everything else (path separators `/` `\`, Windows-illegal `: * ? " < > |`, null bytes, control characters) becomes `_`, consecutive dots are collapsed, and Windows reserved device names (`CON`, `NUL`, `COM1`…) are prefixed. Chinese/non-ASCII labels are preserved, not turned into underscores. Prevents path traversal and yields a cross-platform-safe directory name |
 
 ## Project Structure
 
