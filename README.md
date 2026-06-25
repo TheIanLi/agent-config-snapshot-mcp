@@ -201,7 +201,7 @@ protected_files:
     watch: daily
 
 snapshot_dir: ~/.agent-snapshots/      # Where snapshots are stored
-daily_time: "04:00"                    # Daily schedule (HH:MM)
+daily_time: "04:00"                    # Daily schedule, 24-hour HH:MM or HH:MM:SS (validated at load)
 retention:
   max_snapshots_per_file: 50           # Max snapshots before pruning
 ```
@@ -236,7 +236,7 @@ Your agent gains 4 MCP tools: `snapshot`, `list_snapshots`, `diff_snapshot`, `ro
 | Retention cap | Configurable max snapshots per file; oldest pruned automatically |
 | Collision-proof | Multiple snapshots within the same second get counter suffixes, never overwrite |
 | Permission hardening | Snapshot directory enforced to `700` (owner-only) since it may contain secrets like `.env`. On Windows, uses ACL via `icacls` to restrict access to current user only. |
-| Path sanitization | Dangerous characters in labels (`../`, `/`, `\`) are automatically replaced to prevent path traversal |
+| Path sanitization | Labels are whitelist-sanitized — only `A–Z a–z 0–9 _ . -` are kept; everything else (path separators `/` `\`, Windows-illegal `: * ? " < > |`, null bytes, `..` sequences) becomes `_`, and Windows reserved device names (`CON`, `NUL`, `COM1`…) are prefixed. Prevents path traversal and yields a cross-platform-safe directory name |
 
 ## Project Structure
 
