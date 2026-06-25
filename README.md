@@ -259,11 +259,11 @@ agent-config-snapshot-mcp/
 ## Dependencies
 
 - Python ≥ 3.10
-- [mcp](https://github.com/modelcontextprotocol/python-sdk) — MCP protocol
-- [PyYAML](https://pyyaml.org/) — Config file parsing
-- [watchdog](https://github.com/gorakhargosh/watchdog) — File system monitoring
-- [schedule](https://github.com/dbader/schedule) — Cron-like scheduling
-- [filelock](https://github.com/tox-dev/filelock) — Cross-platform file locking (POSIX flock / Windows msvcrt)
+- [mcp](https://github.com/modelcontextprotocol/python-sdk) ≥ 1.0 — MCP protocol
+- [PyYAML](https://pyyaml.org/) ≥ 6.0 — Config file parsing
+- [watchdog](https://github.com/gorakhargosh/watchdog) ≥ 3.0 — File system monitoring
+- [schedule](https://github.com/dbader/schedule) ≥ 1.2 — Cron-like scheduling
+- [filelock](https://github.com/tox-dev/filelock) ≥ 3.12 — Cross-platform file locking (POSIX flock / Windows msvcrt)
 
 ## License
 

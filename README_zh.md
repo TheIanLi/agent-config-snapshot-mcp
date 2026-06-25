@@ -259,11 +259,11 @@ agent-config-snapshot-mcp/
 ## 依赖
 
 - Python ≥ 3.10
-- [mcp](https://github.com/modelcontextprotocol/python-sdk) — MCP 协议
-- [PyYAML](https://pyyaml.org/) — 配置文件解析
-- [watchdog](https://github.com/gorakhargosh/watchdog) — 文件系统监控
-- [schedule](https://github.com/dbader/schedule) — Cron 风格定时调度
-- [filelock](https://github.com/tox-dev/filelock) — 跨平台文件锁（POSIX flock / Windows msvcrt）
+- [mcp](https://github.com/modelcontextprotocol/python-sdk) ≥ 1.0 — MCP 协议
+- [PyYAML](https://pyyaml.org/) ≥ 6.0 — 配置文件解析
+- [watchdog](https://github.com/gorakhargosh/watchdog) ≥ 3.0 — 文件系统监控
+- [schedule](https://github.com/dbader/schedule) ≥ 1.2 — Cron 风格定时调度
+- [filelock](https://github.com/tox-dev/filelock) ≥ 3.12 — 跨平台文件锁（POSIX flock / Windows msvcrt）
 
 ## 许可证
 
