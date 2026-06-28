@@ -28,9 +28,13 @@ _TIMESTAMP_FMT = "%Y%m%d_%H%M%S"
 _TIMESTAMP_LEN = 15  # YYYYMMDD_HHMMSS 固定长度
 
 
-def _ensure_snapshot_dir(snapshot_dir: Path) -> None:
-    """确保快照存储目录存在。"""
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
+def _ensure_snapshot_dir(snapshot_dir: Path) -> bool:
+    """确保快照存储目录存在。返回本次是否新建了该目录。"""
+    try:
+        snapshot_dir.mkdir(parents=True, exist_ok=False)
+        return True
+    except FileExistsError:
+        return False
 
 
 def _file_snapshot_dir(snapshot_dir: Path, pf: ProtectedFile) -> Path:
@@ -99,12 +103,13 @@ def create_snapshot(
     if not pf.path.exists():
         raise FileNotFoundError(f"源文件不存在，无法拍快照: {pf.path}")
 
-    _ensure_snapshot_dir(snapshot_dir)
-    # 每次拍快照都加固根目录权限（POSIX 收紧到 0o700 / Windows 设 ACL）。
+    # 仅在快照根目录"本次新建"时加固权限（POSIX 收紧到 0o700 / Windows 设 ACL）。
     # 放在这里而非仅靠 watcher，是为了覆盖 CLI 直接拍快照的路径，并消除
     # "首跑时目录尚不存在、watcher 提前加固扑空" 的时序缺口。根目录 0o700
-    # 即可阻止其它用户进入，是敏感快照的安全边界。
-    compat.secure_directory(snapshot_dir)
+    # 即可阻止其它用户进入，是敏感快照的安全边界。只在新建时加固可避免
+    # Windows 上每次快照都重复 spawn icacls 子进程。
+    if _ensure_snapshot_dir(snapshot_dir):
+        compat.secure_directory(snapshot_dir)
     dest_dir = _file_snapshot_dir(snapshot_dir, pf)
     _ensure_snapshot_dir(dest_dir)
 

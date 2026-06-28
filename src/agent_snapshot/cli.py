@@ -11,7 +11,7 @@ from pathlib import Path
 import yaml
 
 from . import compat
-from .config import load_config
+from .config import load_config, ConfigError
 from .snapshot import (
     SnapshotReason,
     create_snapshot,
@@ -572,9 +572,11 @@ def main():
                   "或设置 SNAPSHOT_CONFIG 环境变量指向已有的配置文件。",
                   file=sys.stderr)
         sys.exit(1)
-    except ValueError as e:
+    except ConfigError as e:
         # 配置内容非法（重复 label / watch 模式错误 / daily_time 格式错误等）。
         # 这类错误对初学者而言，原始 traceback 毫无帮助，给一句可读的提示即可。
+        # 只拦截配置专用异常，避免把运行期 ValueError（如快照文件名解析失败）
+        # 误报成"配置文件有问题"。
         print(f"错误: 配置文件有问题 —— {e}", file=sys.stderr)
         sys.exit(1)
 
