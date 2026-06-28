@@ -101,7 +101,12 @@ agent-snapshot init --scan-dir ~/.my-agent
 
 # Non-interactive: protect everything detected, no prompts
 agent-snapshot init --all
+
+# Overwrite an existing config (default: refuse, to protect your current list)
+agent-snapshot init --preset hermes --force
 ```
+
+> By default `init` **refuses to overwrite** an existing `snapshot-config.yaml`, since that file is often a hand-picked list of protected files. Pass `--force` (`-f`) to regenerate and overwrite it.
 
 **How the scan works:** detection is filename-agnostic — it scans each agent directory and
 collects every small config-shaped file (`.yaml` / `.yml` / `.json` / `.md` / `.toml` / `.env`,

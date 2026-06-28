@@ -7,6 +7,7 @@
 - Windows snapshot-directory hardening via ACL (`icacls`), best-effort
 - Add `gemini` and `codex` presets; expand auto-detected agent directories
 - Add `init --scan-dir` to scan arbitrary directories and `init --all`/`-y` for non-interactive setup
+- `init` refuses to overwrite an existing config by default; add `init --force`/`-f` to overwrite
 - Reject duplicate labels at config load time
 - Whitelist-based label sanitization (Unicode letters/digits including CJK, plus `_.-`, kept; CJK/non-ASCII labels preserved) with Windows reserved-name avoidance
 - Validate `daily_time` format (24-hour `HH:MM` / `HH:MM:SS`) at config load

@@ -101,7 +101,12 @@ agent-snapshot init --scan-dir ~/.my-agent
 
 # 非交互：直接保护检测到的全部文件，不再逐项询问
 agent-snapshot init --all
+
+# 覆盖已存在的配置（默认拒绝覆盖，避免误删现有保护清单）
+agent-snapshot init --preset hermes --force
 ```
+
+> 默认情况下 `init` **不会覆盖**已存在的 `snapshot-config.yaml`，因为这份文件往往是你精心挑选的受保护文件清单。需要重新生成并覆盖时，请加 `--force`（`-f`）。
 
 **扫描原理（重要）：** 检测**不认文件名**，而是扫描每个 agent 目录、把所有"长得像配置的小文件"
 （`.yaml` / `.yml` / `.json` / `.md` / `.toml` / `.env`，且 < 1MB）都收集起来，
