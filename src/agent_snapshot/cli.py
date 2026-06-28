@@ -360,6 +360,15 @@ def run_init(args: argparse.Namespace) -> None:
     """执行 init 命令。"""
     output = Path(args.output) if args.output else Path("snapshot-config.yaml")
 
+    # 已存在配置时，默认不覆盖：这份 YAML 往往是用户精心挑选的受保护文件清单，
+    # 静默覆盖会让保护范围悄悄丢失。要覆盖必须显式传 --force。
+    if output.exists() and not args.force:
+        print(
+            f"配置文件已存在: {output}\n"
+            f"如需重新生成并覆盖，请加 --force；否则请手动编辑现有文件。"
+        )
+        return
+
     if args.preset:
         # 预设模式：直接加载模板
         data = _load_preset(args.preset)
@@ -508,6 +517,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="非交互模式：直接保护检测到的全部文件，跳过逐项询问",
     )
+    init_parser.add_argument(
+        "--force", "-f",
+        action="store_true",
+        help="覆盖已存在的配置文件（默认不覆盖，避免误删现有保护清单）",
+    )
     init_parser.set_defaults(func=run_init)
 
     # snapshot 子命令
@@ -557,6 +571,11 @@ def main():
             print("\n提示: 请先运行 agent-snapshot init 初始化配置文件，"
                   "或设置 SNAPSHOT_CONFIG 环境变量指向已有的配置文件。",
                   file=sys.stderr)
+        sys.exit(1)
+    except ValueError as e:
+        # 配置内容非法（重复 label / watch 模式错误 / daily_time 格式错误等）。
+        # 这类错误对初学者而言，原始 traceback 毫无帮助，给一句可读的提示即可。
+        print(f"错误: 配置文件有问题 —— {e}", file=sys.stderr)
         sys.exit(1)
 
 

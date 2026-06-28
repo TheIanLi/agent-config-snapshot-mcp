@@ -1,10 +1,12 @@
 """测试快照核心逻辑：用临时文件验证 snapshot/list/diff/rollback。"""
 
+import stat
 import tempfile
 from pathlib import Path
 
 import pytest
 
+from agent_snapshot import compat
 from agent_snapshot.config import ProtectedFile, SnapshotConfig
 from agent_snapshot.snapshot import (
     create_snapshot,
@@ -169,6 +171,24 @@ def test_binary_diff_detection(temp_config_file):
 
     result = diff_snapshot(pf, snap_dir, 1)
     assert "二进制" in result
+
+
+@pytest.mark.skipif(
+    not compat.IS_POSIX, reason="权限位仅在 POSIX 有意义；Windows 用 icacls 另测"
+)
+def test_create_snapshot_hardens_dir_permissions(temp_config_file):
+    """拍快照时应把快照根目录收紧到 0o700，不依赖 watcher 单独加固。
+
+    快照目录存放 .env/auth.json 等敏感文件明文副本，CLI 直接拍快照
+    （不经 watcher）时也必须保证目录仅 owner 可访问。
+    """
+    pf, snap_dir = temp_config_file
+    assert not snap_dir.exists()  # 首跑：目录尚不存在
+
+    create_snapshot(pf, snap_dir)
+
+    mode = stat.S_IMODE(snap_dir.stat().st_mode)
+    assert mode == 0o700, f"快照根目录权限应为 700，实际 {oct(mode)}"
 
 
 def test_prune_old_snapshots(temp_config_file):

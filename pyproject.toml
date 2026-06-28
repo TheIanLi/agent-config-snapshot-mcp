@@ -2,6 +2,9 @@
 name = "agent-config-snapshot-mcp"
 version = "0.1.0"
 description = "AI agent 关键配置文件快照备份与回滚 MCP Server"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 # 下限锁定主版本：防止某个依赖的破坏性升级静默破坏工具。
 # 对一个保护配置文件的工具来说，依赖行为的稳定性很重要。
@@ -23,7 +26,8 @@ agent-snapshot = "agent_snapshot.cli:main"
 agent-snapshot-mcp = "agent_snapshot.server:main"
 
 [build-system]
-requires = ["setuptools>=64", "setuptools-scm>=8"]
+# 用 SPDX 字符串声明 license（PEP 639），需要 setuptools>=77。
+requires = ["setuptools>=77", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

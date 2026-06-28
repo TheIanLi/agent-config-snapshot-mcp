@@ -39,6 +39,8 @@ _WINDOWS_RESERVED = (
 )
 
 # daily_time 合法格式：HH:MM 或 HH:MM:SS（24 小时制）。
+# 小时必须是两位（"04:00" 而非 "4:00"）——下游 schedule.at 只认两位小时，
+# 这里的正则必须和 schedule 的约定保持一致，否则会放过让守护进程崩溃的值。
 _DAILY_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$")
 
 
