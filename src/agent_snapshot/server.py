@@ -8,15 +8,15 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from agent_snapshot.config import load_config, SnapshotConfig
-from agent_snapshot.snapshot import (
+from .config import load_config, SnapshotConfig, ProtectedFile
+from .snapshot import (
     SnapshotReason,
     create_snapshot,
     list_snapshots as _list_snapshots,
     diff_snapshot as _diff_snapshot,
     rollback as _rollback,
 )
-from agent_snapshot import compat
+from . import compat
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -120,12 +120,27 @@ async def rollback(label: str, index: int) -> str:
 
 # ---- 同步实现（在线程池中执行，不阻塞事件循环） ----
 
-def _snapshot_sync(label: str) -> str:
+def _resolve_pf(
+    label: str,
+) -> tuple[ProtectedFile | None, SnapshotConfig, str | None]:
+    """按 label 查找受保护文件。
+
+    返回 (pf, cfg, error)：找到则 error 为 None；找不到则 pf 为 None、
+    error 是给用户看的"未找到标签 + 可用标签清单"提示。
+    把这段查找逻辑收成一处，避免四个工具各抄一遍。
+    """
     cfg = get_config()
     pf = cfg.get_by_label(label)
     if pf is None:
         available = ", ".join(p.label for p in cfg.protected_files)
-        return f"未找到标签「{label}」。可用标签: {available}"
+        return None, cfg, f"未找到标签「{label}」。可用标签: {available}"
+    return pf, cfg, None
+
+
+def _snapshot_sync(label: str) -> str:
+    pf, cfg, error = _resolve_pf(label)
+    if error is not None:
+        return error
 
     snap_path = create_snapshot(
         pf, cfg.snapshot_dir, cfg.max_snapshots_per_file, reason=SnapshotReason.MANUAL
@@ -134,11 +149,9 @@ def _snapshot_sync(label: str) -> str:
 
 
 def _list_sync(label: str) -> str:
-    cfg = get_config()
-    pf = cfg.get_by_label(label)
-    if pf is None:
-        available = ", ".join(p.label for p in cfg.protected_files)
-        return f"未找到标签「{label}」。可用标签: {available}"
+    pf, cfg, error = _resolve_pf(label)
+    if error is not None:
+        return error
 
     snaps = _list_snapshots(pf, cfg.snapshot_dir)
     if not snaps:
@@ -154,21 +167,17 @@ def _list_sync(label: str) -> str:
 
 
 def _diff_sync(label: str, index: int) -> str:
-    cfg = get_config()
-    pf = cfg.get_by_label(label)
-    if pf is None:
-        available = ", ".join(p.label for p in cfg.protected_files)
-        return f"未找到标签「{label}」。可用标签: {available}"
+    pf, cfg, error = _resolve_pf(label)
+    if error is not None:
+        return error
 
     return _diff_snapshot(pf, cfg.snapshot_dir, index)
 
 
 def _rollback_sync(label: str, index: int) -> str:
-    cfg = get_config()
-    pf = cfg.get_by_label(label)
-    if pf is None:
-        available = ", ".join(p.label for p in cfg.protected_files)
-        return f"未找到标签「{label}」。可用标签: {available}"
+    pf, cfg, error = _resolve_pf(label)
+    if error is not None:
+        return error
 
     result = _rollback(pf, cfg.snapshot_dir, index, cfg.max_snapshots_per_file)
     return (

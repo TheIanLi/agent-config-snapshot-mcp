@@ -23,6 +23,14 @@ logger = logging.getLogger(__name__)
 
 _VALID_WATCH_MODES = {"on_change", "daily", "manual"}
 
+
+class ConfigError(ValueError):
+    """配置文件内容非法（重复 label / watch 模式错误 / daily_time 格式错误等）。
+
+    继承 ValueError 以兼容既有调用方，但作为专用类型让 CLI 能把"配置问题"和
+    其它运行期 ValueError（如解析快照文件名时的 strptime 失败）区分开来报错。
+    """
+
 # label 白名单：只允许 Unicode 字词字符（含中文等非 ASCII 字母）、下划线、点、连字符。
 # 其它字符（包括路径分隔符 / \ 和 Windows 非法字符 : * ? " < > |，以及空字节、控制字符）
 # 一律替换为下划线。Python 3 的 str 正则中 \w 默认是 Unicode 感知的，所以 CJK 等
@@ -39,6 +47,8 @@ _WINDOWS_RESERVED = (
 )
 
 # daily_time 合法格式：HH:MM 或 HH:MM:SS（24 小时制）。
+# 小时必须是两位（"04:00" 而非 "4:00"）——下游 schedule.at 只认两位小时，
+# 这里的正则必须和 schedule 的约定保持一致，否则会放过让守护进程崩溃的值。
 _DAILY_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$")
 
 
@@ -142,10 +152,13 @@ def load_config(config_path: Optional[str] = None) -> SnapshotConfig:
     files = []
     for item in data.get("protected_files", []):
         path = _expand_path(item["path"])
-        label = validate_label(item["label"])
+        try:
+            label = validate_label(item["label"])
+        except ValueError as e:
+            raise ConfigError(str(e)) from e
         watch = item.get("watch", "manual")
         if watch not in _VALID_WATCH_MODES:
-            raise ValueError(
+            raise ConfigError(
                 f"文件 '{item['path']}' 的 watch 模式无效: '{watch}'，可选: {_VALID_WATCH_MODES}"
             )
         files.append(ProtectedFile(path=path, label=label, watch=watch))
@@ -155,7 +168,7 @@ def load_config(config_path: Optional[str] = None) -> SnapshotConfig:
     seen_labels: dict[str, str] = {}
     for pf in files:
         if pf.label in seen_labels:
-            raise ValueError(
+            raise ConfigError(
                 f"配置中存在重复的 label「{pf.label}」："
                 f"{seen_labels[pf.label]} 与 {pf.path}。请为其中一个改用不同的 label。"
             )
@@ -168,7 +181,7 @@ def load_config(config_path: Optional[str] = None) -> SnapshotConfig:
     # 调用 schedule 时才崩溃，导致后台进程静默挂掉。提前在加载时报错更安全。
     daily_time = data.get("daily_time", "04:00")
     if not _DAILY_TIME_RE.match(str(daily_time)):
-        raise ValueError(
+        raise ConfigError(
             f"daily_time 格式无效: {daily_time!r}，应为 24 小时制的 HH:MM 或 HH:MM:SS（如 '04:00'）"
         )
 

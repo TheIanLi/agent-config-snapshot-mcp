@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 from enum import Enum
 from pathlib import Path
 
+from . import compat
 from .config import ProtectedFile
 
 logger = logging.getLogger(__name__)
@@ -27,9 +28,13 @@ _TIMESTAMP_FMT = "%Y%m%d_%H%M%S"
 _TIMESTAMP_LEN = 15  # YYYYMMDD_HHMMSS 固定长度
 
 
-def _ensure_snapshot_dir(snapshot_dir: Path) -> None:
-    """确保快照存储目录存在。"""
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
+def _ensure_snapshot_dir(snapshot_dir: Path) -> bool:
+    """确保快照存储目录存在。返回本次是否新建了该目录。"""
+    try:
+        snapshot_dir.mkdir(parents=True, exist_ok=False)
+        return True
+    except FileExistsError:
+        return False
 
 
 def _file_snapshot_dir(snapshot_dir: Path, pf: ProtectedFile) -> Path:
@@ -98,7 +103,13 @@ def create_snapshot(
     if not pf.path.exists():
         raise FileNotFoundError(f"源文件不存在，无法拍快照: {pf.path}")
 
-    _ensure_snapshot_dir(snapshot_dir)
+    # 仅在快照根目录"本次新建"时加固权限（POSIX 收紧到 0o700 / Windows 设 ACL）。
+    # 放在这里而非仅靠 watcher，是为了覆盖 CLI 直接拍快照的路径，并消除
+    # "首跑时目录尚不存在、watcher 提前加固扑空" 的时序缺口。根目录 0o700
+    # 即可阻止其它用户进入，是敏感快照的安全边界。只在新建时加固可避免
+    # Windows 上每次快照都重复 spawn icacls 子进程。
+    if _ensure_snapshot_dir(snapshot_dir):
+        compat.secure_directory(snapshot_dir)
     dest_dir = _file_snapshot_dir(snapshot_dir, pf)
     _ensure_snapshot_dir(dest_dir)
 
@@ -119,15 +130,20 @@ def create_snapshot(
 
     # 按保留策略清理最老的快照
     if max_snapshots > 0:
-        _prune_snapshots(dest_dir, max_snapshots)
+        _prune_snapshots(dest_dir, pf.path.name, max_snapshots)
 
     return snapshot_file
 
 
-def _prune_snapshots(dest_dir: Path, max_snapshots: int) -> None:
-    """删除最老的快照，使快照总数不超过 max_snapshots。按时间从老到新排序，删最老的。"""
+def _prune_snapshots(dest_dir: Path, source_name: str, max_snapshots: int) -> None:
+    """删除最老的快照，使快照总数不超过 max_snapshots。按时间从老到新排序，删最老的。
+
+    glob 用 ``{source_name}.snapshot.*`` 与 list/get 保持一致：每个 label 独占
+    子目录、当前只放一个源文件的快照，但限定文件名能防止将来该目录混入其它文件时
+    误删（避免和 list 出现"删到的和列出的不是同一批"的不一致）。
+    """
     snapshots = sorted(
-        dest_dir.glob("*.snapshot.*"),
+        dest_dir.glob(f"{source_name}.snapshot.*"),
         key=lambda p: _parse_timestamp(p.name),
     )
     overflow = len(snapshots) - max_snapshots

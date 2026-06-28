@@ -152,8 +152,9 @@ def test_invalid_daily_time_raises(tmp_path):
 
 
 def test_single_digit_hour_daily_time_raises(tmp_path):
-    """单数字小时（如 '4:00'）能通过校验却会让 schedule.day.at() 崩溃，应被拒绝。"""
-    cfg = tmp_path / "single_digit_time.yaml"
+    """单位数小时（如 "4:00"）虽是常见写法，但 schedule.at 只认两位小时，
+    必须在加载时就拦下，否则会等到守护进程注册定时任务时才崩。"""
+    cfg = tmp_path / "single_digit.yaml"
     cfg.write_text(
         "protected_files: []\n"
         "snapshot_dir: ~/.snaps/\n"
@@ -161,6 +162,24 @@ def test_single_digit_hour_daily_time_raises(tmp_path):
     )
     with pytest.raises(ValueError, match="daily_time"):
         load_config(str(cfg))
+
+
+def test_validated_daily_time_accepted_by_schedule(tmp_path):
+    """凡是能通过 load_config 校验的 daily_time，schedule.at 都必须能接受。
+    这条测试把两边的格式约定钉死，防止校验放过会让守护进程崩溃的值。"""
+    import schedule
+
+    for value in ("04:00", "00:00", "23:59", "06:30:15"):
+        cfg = tmp_path / f"time_{value.replace(':', '')}.yaml"
+        cfg.write_text(
+            "protected_files: []\n"
+            "snapshot_dir: ~/.snaps/\n"
+            f"daily_time: '{value}'\n"
+        )
+        config = load_config(str(cfg))
+        # 不抛异常即为通过
+        schedule.every().day.at(config.daily_time).do(lambda: None)
+        schedule.clear()
 
 
 def test_expand_path_with_env(tmp_path, monkeypatch):

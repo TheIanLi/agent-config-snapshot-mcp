@@ -146,6 +146,55 @@ def test_generate_config_overwrites(tmp_path):
     assert "old" not in content
 
 
+def test_init_does_not_overwrite_without_force(tmp_path):
+    """已存在配置文件时，init 默认不覆盖，避免误删用户精心配置的快照清单。"""
+    from agent_snapshot.cli import build_parser, run_init
+
+    out = tmp_path / "snapshot-config.yaml"
+    out.write_text("original: keep\n")
+    parser = build_parser()
+    args = parser.parse_args(["init", "--preset", "hermes", "-o", str(out)])
+    run_init(args)
+    assert out.read_text(encoding="utf-8") == "original: keep\n"
+
+
+def test_init_overwrites_with_force(tmp_path):
+    """显式传 --force 时才覆盖已存在的配置。"""
+    from agent_snapshot.cli import build_parser, run_init
+
+    out = tmp_path / "snapshot-config.yaml"
+    out.write_text("original: keep\n")
+    parser = build_parser()
+    args = parser.parse_args(["init", "--preset", "hermes", "-o", str(out), "--force"])
+    run_init(args)
+    assert "original: keep" not in out.read_text(encoding="utf-8")
+
+
+def test_main_handles_value_error(tmp_path, monkeypatch, capsys):
+    """配置非法（如 watch 模式错误）时，main 应友好报错并以非 0 退出，
+    而不是把原始 traceback 抛给用户。"""
+    import sys
+
+    from agent_snapshot import cli
+
+    bad = tmp_path / "snapshot-config.yaml"
+    bad.write_text(
+        "protected_files:\n"
+        "  - path: ~/x.yaml\n"
+        "    label: x\n"
+        "    watch: bogus\n"
+        "snapshot_dir: ~/.snaps/\n"
+    )
+    monkeypatch.setenv("SNAPSHOT_CONFIG", str(bad))
+    monkeypatch.setattr(sys, "argv", ["agent-snapshot", "snapshot", "x"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "错误" in err
+
+
 def test_detect_agents(tmp_path):
     """测试 agent 目录检测：使用 mock 目录而非依赖真实环境。"""
     from agent_snapshot import cli
